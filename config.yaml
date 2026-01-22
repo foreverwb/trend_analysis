@@ -10,7 +10,7 @@ ibkr:
   # 端口号: 4001=IB Gateway Live, 4002=IB Gateway Paper, 7496=TWS Live, 7497=TWS Paper
   port: 4002
   # 客户端ID (每个连接需要唯一)
-  client_id: 2
+  client_id: 3
   # 账户ID (可选，留空将使用默认账户)
   account_id: ""
   # 连接超时时间 (秒)

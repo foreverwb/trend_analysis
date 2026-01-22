@@ -151,10 +151,14 @@ const App = () => {
     return 'text-red-600';
   };
 
-  // Holdings Table Component
+  // Holdings Table Component - 扩展版本
+  // 修复 Bug #3: 增加 50DMA, 200DMA, PositioningScore, TermScore 字段
   const HoldingsTable = ({ holdings = [], maxDisplay = 10, etfSymbol }) => {
     const isExpanded = expandedHoldings[etfSymbol] || false;
     const displayHoldings = isExpanded ? holdings : holdings.slice(0, maxDisplay);
+    
+    // 检查是否有扩展数据
+    const hasExtendedData = holdings.some(h => h.sma50 !== undefined || h.sma200 !== undefined);
     
     return (
       <div className="mt-6">
@@ -164,25 +168,76 @@ const App = () => {
         </div>
         
         <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
-          <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-slate-100 border-b border-slate-200 font-medium text-xs text-slate-700">
-            <div className="col-span-2">排名</div>
-            <div className="col-span-6">Ticker</div>
-            <div className="col-span-4 text-right">Weight</div>
+          {/* 表头 - 根据是否有扩展数据显示不同列 */}
+          <div className={`grid ${hasExtendedData ? 'grid-cols-16' : 'grid-cols-12'} gap-2 px-4 py-3 bg-slate-100 border-b border-slate-200 font-medium text-xs text-slate-700`}>
+            <div className="col-span-1">#</div>
+            <div className="col-span-2">Ticker</div>
+            <div className="col-span-2 text-right">Weight</div>
+            {hasExtendedData && (
+              <>
+                <div className="col-span-2 text-right">50DMA</div>
+                <div className="col-span-2 text-right">200DMA</div>
+                <div className="col-span-2 text-right">RSI</div>
+                <div className="col-span-2 text-right">Position</div>
+                <div className="col-span-2 text-right">Term</div>
+              </>
+            )}
           </div>
           
           <div className="max-h-96 overflow-y-auto">
             {displayHoldings.map((holding, idx) => (
               <div 
                 key={idx} 
-                className={`grid grid-cols-12 gap-4 px-4 py-3 text-sm ${
+                className={`grid ${hasExtendedData ? 'grid-cols-16' : 'grid-cols-12'} gap-2 px-4 py-3 text-sm ${
                   idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
                 } hover:bg-blue-50 transition-colors border-b border-slate-100`}
               >
-                <div className="col-span-2 text-slate-600 font-medium">#{idx + 1}</div>
-                <div className="col-span-6 font-mono font-bold text-slate-900">{holding.ticker}</div>
-                <div className="col-span-4 text-right font-medium text-blue-600">
+                <div className="col-span-1 text-slate-600 font-medium">#{idx + 1}</div>
+                <div className="col-span-2 font-mono font-bold text-slate-900">{holding.ticker}</div>
+                <div className="col-span-2 text-right font-medium text-blue-600">
                   {typeof holding.weight === 'number' ? holding.weight.toFixed(2) : holding.weight}%
                 </div>
+                {hasExtendedData && (
+                  <>
+                    <div className={`col-span-2 text-right font-medium ${
+                      holding.sma50 > 0 ? 'text-emerald-600' : holding.sma50 < 0 ? 'text-red-600' : 'text-slate-400'
+                    }`}>
+                      {holding.sma50 !== null && holding.sma50 !== undefined 
+                        ? `${holding.sma50 > 0 ? '+' : ''}${holding.sma50.toFixed(2)}%` 
+                        : '-'}
+                    </div>
+                    <div className={`col-span-2 text-right font-medium ${
+                      holding.sma200 > 0 ? 'text-emerald-600' : holding.sma200 < 0 ? 'text-red-600' : 'text-slate-400'
+                    }`}>
+                      {holding.sma200 !== null && holding.sma200 !== undefined 
+                        ? `${holding.sma200 > 0 ? '+' : ''}${holding.sma200.toFixed(2)}%` 
+                        : '-'}
+                    </div>
+                    <div className={`col-span-2 text-right font-medium ${
+                      holding.rsi > 70 ? 'text-red-600' : holding.rsi < 30 ? 'text-emerald-600' : 'text-slate-600'
+                    }`}>
+                      {holding.rsi !== null && holding.rsi !== undefined 
+                        ? holding.rsi.toFixed(1) 
+                        : '-'}
+                    </div>
+                    <div className={`col-span-2 text-right font-medium ${
+                      holding.positioning_score > 60 ? 'text-emerald-600' : 
+                      holding.positioning_score < 40 ? 'text-red-600' : 'text-amber-600'
+                    }`}>
+                      {holding.positioning_score !== null && holding.positioning_score !== undefined 
+                        ? holding.positioning_score.toFixed(0) 
+                        : '-'}
+                    </div>
+                    <div className={`col-span-2 text-right font-medium ${
+                      holding.term_score > 0 ? 'text-red-600' : 
+                      holding.term_score < 0 ? 'text-emerald-600' : 'text-slate-600'
+                    }`}>
+                      {holding.term_score !== null && holding.term_score !== undefined 
+                        ? holding.term_score.toFixed(1) 
+                        : '-'}
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -208,6 +263,15 @@ const App = () => {
             </div>
           )}
         </div>
+        
+        {/* 图例说明 */}
+        {hasExtendedData && (
+          <div className="mt-3 text-xs text-slate-500 flex gap-4 flex-wrap">
+            <span>📊 50DMA/200DMA: 相对均线距离</span>
+            <span>🎯 Position: 定位评分 (Call/Put)</span>
+            <span>📈 Term: 期限结构 (IV30-HV20)</span>
+          </div>
+        )}
       </div>
     );
   };

@@ -39,15 +39,53 @@ def log_import(db: Session, source: str, etf_symbol: str, count: int, status: st
 
 
 # ==================== Finviz Import ====================
+def parse_numeric_value(value, default=0):
+    """解析数字值，支持字符串格式（如 "1,234,567" 或 "34%"）"""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        # 移除逗号、百分号和空格
+        cleaned = value.replace(',', '').replace('%', '').replace(' ', '')
+        # 处理带 M/B/K 后缀的数字
+        if cleaned.endswith('M'):
+            return float(cleaned[:-1]) * 1000000
+        if cleaned.endswith('B'):
+            return float(cleaned[:-1]) * 1000000000
+        if cleaned.endswith('K'):
+            return float(cleaned[:-1]) * 1000
+        try:
+            return float(cleaned) if cleaned else default
+        except ValueError:
+            return default
+    return default
+
+
 @router.post("/finviz", response_model=ImportResponse)
 async def import_finviz_data(
     data: FinvizImportRequest,
     db: Session = Depends(get_db)
 ):
-    """Import data from Finviz (JSON format)"""
+    """Import data from Finviz (JSON format)
+    
+    支持:
+    1. ETF 持仓股票数据 (原有功能)
+    2. ETF 自身数据 (如 SPY, XLE 等 ETF 的技术指标)
+    """
     try:
         etf_symbol = data.etf_symbol.upper()
         data_date = data.data_date or date.today()
+        
+        # 检查是否是 ETF 自身的数据（数据中的 Ticker 与 etf_symbol 相同或者是常见的 ETF 代码）
+        etf_tickers = {'SPY', 'XLK', 'XLE', 'XLF', 'XLY', 'XLI', 'XLV', 'XLC', 'XLP', 'XLU', 'XLRE', 'XLB',
+                       'SOXX', 'SMH', 'IGV', 'XOP', 'XRT', 'KBE', 'IBB', 'XHB', 'XME', 'JETS'}
+        
+        # 如果数据中包含 ETF 自身，则标记为 ETF 自身数据
+        is_etf_self_data = any(
+            item.Ticker.upper() in etf_tickers or item.Ticker.upper() == etf_symbol 
+            for item in data.data
+        )
         
         # Clear existing data for this ETF and date
         db.query(FinvizData).filter(
@@ -59,8 +97,11 @@ async def import_finviz_data(
         count = 0
         for item in data.data:
             ticker = item.Ticker.upper().strip()
-            if not ticker or not ticker.isalpha():
+            if not ticker:
                 continue
+            
+            # 获取价格（兼容 Price 和 Pirce）
+            price = item.Price or item.Pirce or 0
             
             record = FinvizData(
                 etf_symbol=etf_symbol,
@@ -71,7 +112,7 @@ async def import_finviz_data(
                 sma200=item.SMA200,
                 high_52w=item.High_52W,
                 rsi=item.RSI,
-                price=item.Price,
+                price=price,
                 volume=item.Volume,
                 data_date=data_date
             )
@@ -80,7 +121,11 @@ async def import_finviz_data(
         
         db.commit()
         
-        log_import(db, "finviz", etf_symbol, count, "success", f"Imported {count} records")
+        # 同步更新标的池状态
+        await sync_symbol_pool_after_import(db, etf_symbol, 'finviz')
+        
+        log_import(db, "finviz", etf_symbol, count, "success", 
+                   f"Imported {count} records" + (" (ETF self data)" if is_etf_self_data else ""))
         
         return ImportResponse(
             success=True,
@@ -102,7 +147,13 @@ async def import_marketchameleon_data(
     data: MarketChameleonImportRequest,
     db: Session = Depends(get_db)
 ):
-    """Import data from MarketChameleon (JSON format)"""
+    """Import data from MarketChameleon (JSON format)
+    
+    支持:
+    1. ETF 持仓股票数据 (原有功能)
+    2. ETF 自身数据 (如 SPY 等 ETF 的期权指标)
+    3. 字符串格式的数值 (如 "3,875,171", "55.7%")
+    """
     try:
         etf_symbol = data.etf_symbol.upper() if data.etf_symbol else None
         data_date = data.data_date or date.today()
@@ -121,28 +172,33 @@ async def import_marketchameleon_data(
             if not symbol:
                 continue
             
+            # 解析各种格式的数值
             record = MarketChameleonData(
                 etf_symbol=etf_symbol,
                 symbol=symbol,
-                rel_notional_to_90d=item.RelNotionalTo90D,
-                rel_vol_to_90d=item.RelVolTo90D,
-                trade_count=item.TradeCount,
-                iv30=item.IV30,
-                hv20=item.HV20,
-                ivr=item.IVR,
-                iv_52w_p=item.IV_52W_P,
-                iv30_chg=item.IV30_Chg,
-                multi_leg_pct=item.MultiLegPct,
-                contingent_pct=item.ContingentPct,
-                put_pct=item.PutPct,
-                call_volume=item.CallVolume,
-                put_volume=item.PutVolume,
+                rel_notional_to_90d=parse_numeric_value(item.RelNotionalTo90D),
+                rel_vol_to_90d=parse_numeric_value(item.RelVolTo90D),
+                trade_count=int(parse_numeric_value(item.TradeCount)),
+                iv30=parse_numeric_value(item.IV30),
+                hv20=parse_numeric_value(item.HV20),
+                ivr=parse_numeric_value(item.IVR),
+                iv_52w_p=parse_numeric_value(item.IV_52W_P),
+                iv30_chg=parse_numeric_value(item.IV30_Chg or item.IV30ChgPct),
+                multi_leg_pct=parse_numeric_value(item.MultiLegPct),
+                contingent_pct=parse_numeric_value(item.ContingentPct),
+                put_pct=parse_numeric_value(item.PutPct),
+                call_volume=int(parse_numeric_value(item.CallVolume)),
+                put_volume=int(parse_numeric_value(item.PutVolume)),
                 data_date=data_date
             )
             db.add(record)
             count += 1
         
         db.commit()
+        
+        # 同步更新标的池状态
+        if etf_symbol:
+            await sync_symbol_pool_after_import(db, etf_symbol, 'marketchameleon')
         
         log_import(db, "marketchameleon", etf_symbol, count, "success", f"Imported {count} records")
         
@@ -158,6 +214,55 @@ async def import_marketchameleon_data(
         logger.error(f"MarketChameleon import error: {e}")
         log_import(db, "marketchameleon", data.etf_symbol, 0, "failed", str(e))
         raise HTTPException(status_code=400, detail=str(e))
+
+
+async def sync_symbol_pool_after_import(db: Session, etf_symbol: str, source: str):
+    """导入数据后同步更新标的池状态
+    
+    修复 Bug #2.3: 导入数据后"标的池状态明细"没有变化
+    """
+    from ..models import SymbolPool, FinvizData, MarketChameleonData
+    
+    # 获取该 ETF 下所有标的的最新数据
+    if source == 'finviz':
+        tickers = db.query(FinvizData.ticker).filter(
+            FinvizData.etf_symbol == etf_symbol
+        ).distinct().all()
+        
+        for (ticker,) in tickers:
+            symbol = db.query(SymbolPool).filter(SymbolPool.ticker == ticker).first()
+            if symbol:
+                symbol.finviz_status = 'ready'
+                symbol.finviz_last_update = datetime.utcnow()
+                # 重新计算完备度
+                count = 0
+                if symbol.finviz_status == 'ready': count += 1
+                if symbol.mc_status == 'ready': count += 1
+                if symbol.ibkr_status == 'ready': count += 1
+                if symbol.futu_status == 'ready': count += 1
+                symbol.completeness = int((count / 4) * 100)
+                symbol.updated_at = datetime.utcnow()
+    
+    elif source == 'marketchameleon':
+        symbols = db.query(MarketChameleonData.symbol).filter(
+            MarketChameleonData.etf_symbol == etf_symbol
+        ).distinct().all()
+        
+        for (ticker,) in symbols:
+            symbol = db.query(SymbolPool).filter(SymbolPool.ticker == ticker).first()
+            if symbol:
+                symbol.mc_status = 'ready'
+                symbol.mc_last_update = datetime.utcnow()
+                # 重新计算完备度
+                count = 0
+                if symbol.finviz_status == 'ready': count += 1
+                if symbol.mc_status == 'ready': count += 1
+                if symbol.ibkr_status == 'ready': count += 1
+                if symbol.futu_status == 'ready': count += 1
+                symbol.completeness = int((count / 4) * 100)
+                symbol.updated_at = datetime.utcnow()
+    
+    db.commit()
 
 
 # ==================== File Upload ====================

@@ -11,8 +11,7 @@ import logging
 from ..database import get_db
 from ..models import MarketRegime, SectorETF, IndustryETF, MomentumStock
 from ..schemas import MarketRegimeResponse, SPYData, DashboardSummary
-from ..services import get_ibkr_service, reset_ibkr_service, get_ibkr_connection_info, CalculationService, DeltaCalculationService
-from ..config_loader import get_current_config, reload_config
+from ..services import get_ibkr_service, CalculationService, DeltaCalculationService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/market", tags=["Market"])
@@ -52,89 +51,15 @@ async def get_market_regime(db: Session = Depends(get_db)):
     )
 
 
-@router.get("/ibkr/status")
-async def get_ibkr_status():
-    """
-    获取 IBKR 连接状态和配置信息 (诊断用)
-    Get IBKR connection status and configuration info (for debugging)
-    """
-    config = get_current_config()
-    connection_info = get_ibkr_connection_info()
-    
-    return {
-        "config": {
-            "host": config.ibkr.host,
-            "port": config.ibkr.port,
-            "client_id": config.ibkr.client_id,
-            "enabled": config.ibkr.enabled,
-            "connection_timeout": config.ibkr.connection_timeout
-        },
-        "service": connection_info,
-        "tips": {
-            "paper_trading_port": 4002,
-            "live_trading_port": 4001,
-            "tws_paper_port": 7497,
-            "tws_live_port": 7496
-        }
-    }
-
-
-@router.post("/ibkr/reconnect")
-async def reconnect_ibkr():
-    """
-    重置 IBKR 连接 (重新加载配置并连接)
-    Reset IBKR connection (reload config and reconnect)
-    """
-    try:
-        # 重新加载配置
-        reload_config()
-        
-        # 重置 IBKR 服务单例
-        reset_ibkr_service()
-        
-        # 获取新配置
-        config = get_current_config()
-        
-        # 尝试重新连接
-        ibkr = get_ibkr_service()
-        connected = await ibkr.connect()
-        
-        return {
-            "success": connected,
-            "message": "Connected successfully" if connected else "Connection failed",
-            "config": {
-                "host": config.ibkr.host,
-                "port": config.ibkr.port,
-                "client_id": config.ibkr.client_id
-            }
-        }
-    except Exception as e:
-        logger.error(f"Error reconnecting to IBKR: {e}")
-        return {
-            "success": False,
-            "message": str(e),
-            "config": None
-        }
-
-
 @router.post("/regime/refresh", response_model=MarketRegimeResponse)
 async def refresh_market_regime(db: Session = Depends(get_db)):
     """Refresh market regime data from IBKR"""
     try:
-        config = get_current_config()
-        logger.info(f"Attempting IBKR connection: {config.ibkr.host}:{config.ibkr.port} (client_id={config.ibkr.client_id})")
-        
         ibkr = get_ibkr_service()
         await ibkr.connect()
         
         if not ibkr.is_connected:
-            error_detail = (
-                f"Failed to connect to IBKR at {config.ibkr.host}:{config.ibkr.port}. "
-                f"Please verify: 1) IB Gateway is running, 2) API is enabled in Gateway settings, "
-                f"3) Port {config.ibkr.port} is correct (use 4002 for Paper Trading, 4001 for Live)"
-            )
-            logger.error(error_detail)
-            raise HTTPException(status_code=503, detail=error_detail)
+            raise HTTPException(status_code=503, detail="Failed to connect to IBKR")
         
         # Get SPY data
         spy_data = await ibkr.get_spy_data()

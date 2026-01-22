@@ -264,7 +264,10 @@ async def sync_symbol_pool(db: Session = Depends(get_db)):
 # ==================== ETF配置管理 ====================
 @router.get("/etf-configs", response_model=ETFConfigListResponse)
 async def get_etf_configs(db: Session = Depends(get_db)):
-    """获取所有ETF更新配置"""
+    """获取所有ETF更新配置
+    
+    修复: 只返回有 holdings 数据的 ETF，没有 holdings 的 ETF 不展示
+    """
     configs = db.query(ETFRefreshConfig).all()
     
     if not configs:
@@ -276,11 +279,30 @@ async def get_etf_configs(db: Session = Depends(get_db)):
     industry_etfs = []
     
     for config in configs:
+        # 检查该 ETF 是否有 holdings 数据
+        if config.etf_type == 'sector':
+            holdings_count = db.query(ETFHolding).filter(
+                ETFHolding.sector_etf_symbol == config.etf_symbol
+            ).count()
+        else:
+            holdings_count = db.query(ETFHolding).filter(
+                ETFHolding.industry_etf_symbol == config.etf_symbol
+            ).count()
+        
+        # 只有有 holdings 数据的 ETF 才加入列表
+        if holdings_count == 0:
+            continue
+        
+        # 更新 total_holdings 字段
+        if config.total_holdings != holdings_count:
+            config.total_holdings = holdings_count
+            db.add(config)
+        
         item = ETFConfigItem(
             symbol=config.etf_symbol,
             name=config.etf_name or config.etf_symbol,
             type=config.etf_type,
-            total_holdings=config.total_holdings,
+            total_holdings=holdings_count,
             top_n=config.top_n,
             frequency=config.frequency,
             status=config.status,
@@ -291,6 +313,8 @@ async def get_etf_configs(db: Session = Depends(get_db)):
             sector_etfs.append(item)
         else:
             industry_etfs.append(item)
+    
+    db.commit()
     
     # 计算去重后的标的数量
     unique_count = db.query(func.count(func.distinct(SymbolETFMapping.ticker))).scalar() or 0

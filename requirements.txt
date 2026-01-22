@@ -27,3 +27,6 @@ httpx==0.28.1
 # Utilities
 python-dateutil==2.9.0.post0
 PyYAML==6.0.2
+
+# Async utilities - fix for "This event loop is already running" error
+nest_asyncio==1.6.0

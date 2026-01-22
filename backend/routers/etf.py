@@ -38,16 +38,70 @@ SECTOR_ETF_NAMES = {
 
 
 def convert_sector_etf_to_response(etf: SectorETF, db: Session) -> SectorETFResponse:
-    """Convert SectorETF model to response schema"""
+    """Convert SectorETF model to response schema
+    
+    修复 Bug #3: 持仓明细中增加 50DMA, 200DMA, PositioningScore, TermScore
+    """
     # Get holdings
     holdings = db.query(ETFHolding).filter(
         ETFHolding.sector_etf_symbol == etf.symbol
     ).order_by(ETFHolding.weight.desc()).all()
     
-    holdings_response = [
-        HoldingResponse(id=h.id, ticker=h.ticker, weight=h.weight)
-        for h in holdings
-    ]
+    # 获取该 ETF 对应的 Finviz 数据
+    finviz_data_map = {}
+    finviz_records = db.query(FinvizData).filter(
+        FinvizData.etf_symbol == etf.symbol
+    ).order_by(FinvizData.data_date.desc()).all()
+    
+    for record in finviz_records:
+        if record.ticker not in finviz_data_map:
+            finviz_data_map[record.ticker] = record
+    
+    # 获取该 ETF 对应的 MarketChameleon 数据
+    mc_data_map = {}
+    mc_records = db.query(MarketChameleonData).filter(
+        MarketChameleonData.etf_symbol == etf.symbol
+    ).order_by(MarketChameleonData.data_date.desc()).all()
+    
+    for record in mc_records:
+        if record.symbol not in mc_data_map:
+            mc_data_map[record.symbol] = record
+    
+    holdings_response = []
+    for h in holdings:
+        finviz = finviz_data_map.get(h.ticker)
+        mc = mc_data_map.get(h.ticker)
+        
+        # 计算 PositioningScore（基于 Put/Call 比率和 OI 变化）
+        positioning_score = None
+        delta_oi_8_30 = None
+        delta_oi_31_90 = None
+        term_score = None
+        
+        if mc:
+            # 简化的 Positioning Score 计算
+            put_pct = mc.put_pct or 0
+            if put_pct > 0:
+                positioning_score = 50 - (put_pct - 50)  # 50% Put 为中性
+            
+            # TermScore 基于 IV 变化
+            if mc.iv30 and mc.hv20:
+                term_score = mc.iv30 - mc.hv20  # IV30 - HV20 差值
+        
+        holding_resp = HoldingResponse(
+            id=h.id, 
+            ticker=h.ticker, 
+            weight=h.weight,
+            sma50=finviz.sma50 if finviz else None,
+            sma200=finviz.sma200 if finviz else None,
+            price=finviz.price if finviz else None,
+            rsi=finviz.rsi if finviz else None,
+            positioning_score=positioning_score,
+            delta_oi_8_30=delta_oi_8_30,
+            delta_oi_31_90=delta_oi_31_90,
+            term_score=term_score
+        )
+        holdings_response.append(holding_resp)
     
     # Calculate deltas
     delta_service = DeltaCalculationService(db)
@@ -86,15 +140,67 @@ def convert_sector_etf_to_response(etf: SectorETF, db: Session) -> SectorETFResp
 
 
 def convert_industry_etf_to_response(etf: IndustryETF, db: Session) -> IndustryETFResponse:
-    """Convert IndustryETF model to response schema"""
+    """Convert IndustryETF model to response schema
+    
+    修复 Bug #3: 持仓明细中增加 50DMA, 200DMA, PositioningScore, TermScore
+    """
     holdings = db.query(ETFHolding).filter(
         ETFHolding.industry_etf_symbol == etf.symbol
     ).order_by(ETFHolding.weight.desc()).all()
     
-    holdings_response = [
-        HoldingResponse(id=h.id, ticker=h.ticker, weight=h.weight)
-        for h in holdings
-    ]
+    # 获取该 ETF 对应的 Finviz 数据
+    finviz_data_map = {}
+    finviz_records = db.query(FinvizData).filter(
+        FinvizData.etf_symbol == etf.symbol
+    ).order_by(FinvizData.data_date.desc()).all()
+    
+    for record in finviz_records:
+        if record.ticker not in finviz_data_map:
+            finviz_data_map[record.ticker] = record
+    
+    # 获取该 ETF 对应的 MarketChameleon 数据
+    mc_data_map = {}
+    mc_records = db.query(MarketChameleonData).filter(
+        MarketChameleonData.etf_symbol == etf.symbol
+    ).order_by(MarketChameleonData.data_date.desc()).all()
+    
+    for record in mc_records:
+        if record.symbol not in mc_data_map:
+            mc_data_map[record.symbol] = record
+    
+    holdings_response = []
+    for h in holdings:
+        finviz = finviz_data_map.get(h.ticker)
+        mc = mc_data_map.get(h.ticker)
+        
+        # 计算 PositioningScore 和 TermScore
+        positioning_score = None
+        delta_oi_8_30 = None
+        delta_oi_31_90 = None
+        term_score = None
+        
+        if mc:
+            put_pct = mc.put_pct or 0
+            if put_pct > 0:
+                positioning_score = 50 - (put_pct - 50)
+            
+            if mc.iv30 and mc.hv20:
+                term_score = mc.iv30 - mc.hv20
+        
+        holding_resp = HoldingResponse(
+            id=h.id, 
+            ticker=h.ticker, 
+            weight=h.weight,
+            sma50=finviz.sma50 if finviz else None,
+            sma200=finviz.sma200 if finviz else None,
+            price=finviz.price if finviz else None,
+            rsi=finviz.rsi if finviz else None,
+            positioning_score=positioning_score,
+            delta_oi_8_30=delta_oi_8_30,
+            delta_oi_31_90=delta_oi_31_90,
+            term_score=term_score
+        )
+        holdings_response.append(holding_resp)
     
     delta_service = DeltaCalculationService(db)
     deltas = delta_service.calculate_etf_deltas(etf)

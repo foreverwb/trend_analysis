@@ -57,10 +57,39 @@ class HoldingCreate(HoldingBase):
 
 
 class HoldingResponse(HoldingBase):
+    """持仓响应 - 包含更多数据字段
+    
+    修复 Bug #3: 增加 50DMA, 200DMA, PositioningScore, TermScore 字段
+    """
     id: int
+    # 新增: Finviz 数据字段
+    sma50: Optional[float] = None  # 50日均线距离 (%)
+    sma200: Optional[float] = None  # 200日均线距离 (%)
+    price: Optional[float] = None
+    rsi: Optional[float] = None
+    # 新增: 定位评分和期限评分
+    positioning_score: Optional[float] = None  # PositioningScore
+    delta_oi_8_30: Optional[float] = None  # ΔOI_8-30
+    delta_oi_31_90: Optional[float] = None  # ΔOI_31-90
+    term_score: Optional[float] = None  # TermScore
 
     class Config:
         from_attributes = True
+
+
+class HoldingDetailResponse(HoldingResponse):
+    """持仓详细响应 - 包含所有可用数据"""
+    beta: Optional[float] = None
+    atr: Optional[float] = None
+    high_52w: Optional[float] = None
+    volume: Optional[int] = None
+    # MarketChameleon 数据
+    iv30: Optional[float] = None
+    hv20: Optional[float] = None
+    ivr: Optional[float] = None
+    rel_vol: Optional[float] = None
+    call_volume: Optional[int] = None
+    put_volume: Optional[int] = None
 
 
 class HoldingsUpload(BaseModel):
@@ -232,6 +261,7 @@ class MarketRegimeResponse(BaseModel):
 
 # ==================== Data Import ====================
 class FinvizDataItem(BaseModel):
+    """Finviz 数据项 - 支持股票和 ETF 数据"""
     Ticker: str
     Beta: Optional[float] = 0
     ATR: Optional[float] = 0
@@ -240,33 +270,50 @@ class FinvizDataItem(BaseModel):
     High_52W: Optional[float] = Field(0, alias="52W_High")
     RSI: Optional[float] = 0
     Price: Optional[float] = 0
+    Pirce: Optional[float] = None  # 兼容 PDF 中的拼写错误
     Volume: Optional[int] = 0
 
     class Config:
         populate_by_name = True
+    
+    def get_price(self) -> float:
+        """获取价格，兼容 Price 和 Pirce 字段"""
+        return self.Price or self.Pirce or 0
 
 
 class FinvizImportRequest(BaseModel):
     etf_symbol: str
     data: List[FinvizDataItem]
     data_date: Optional[date] = None
+    is_etf_self_data: bool = False  # 新增：是否是 ETF 自身数据而非持仓股票数据
 
 
 class MarketChameleonDataItem(BaseModel):
+    """MarketChameleon 数据项 - 支持股票和 ETF 数据"""
     symbol: str
-    RelNotionalTo90D: Optional[float] = 0
-    RelVolTo90D: Optional[float] = 0
+    RelNotionalTo90D: Optional[str] = None  # 支持字符串格式如 "0.60"
+    RelVolTo90D: Optional[str] = None  # 支持字符串格式如 "0.92"
     TradeCount: Optional[int] = 0
     IV30: Optional[float] = 0
     HV20: Optional[float] = 0
-    IVR: Optional[float] = 0
-    IV_52W_P: Optional[float] = 0
+    IVR: Optional[str] = None  # 支持字符串格式如 "34%"
+    IV_52W_P: Optional[str] = None  # 支持字符串格式如 "7%"
     IV30_Chg: Optional[float] = 0
-    MultiLegPct: Optional[float] = 0
-    ContingentPct: Optional[float] = 0
-    PutPct: Optional[float] = 0
-    CallVolume: Optional[int] = 0
-    PutVolume: Optional[int] = 0
+    IV30ChgPct: Optional[str] = None  # 支持字符串格式如 "+0.8%"
+    MultiLegPct: Optional[str] = None  # 支持字符串格式如 "10%"
+    ContingentPct: Optional[str] = None
+    PutPct: Optional[str] = None  # 支持字符串格式如 "55.7%"
+    CallVolume: Optional[str] = None  # 支持字符串格式如 "3,875,171"
+    PutVolume: Optional[str] = None  # 支持字符串格式如 "4,879,146"
+    # 新增字段支持 ETF 数据
+    CallNotional: Optional[str] = None  # 如 "661.46 M"
+    PutNotional: Optional[str] = None  # 如 "741.28 M"
+    HV1Y: Optional[float] = 0
+    Volume: Optional[str] = None  # 如 "8,754,317"
+    OI_PctRank: Optional[str] = None  # 如 "36%"
+    Earnings: Optional[str] = None
+    PriceChgPct: Optional[str] = None  # 如 "-0.1%"
+    SingleLegPct: Optional[str] = None  # 如 "90%"
 
 
 class MarketChameleonImportRequest(BaseModel):

@@ -19,7 +19,7 @@ PYTHON_MIN_VERSION="3.10"
 
 echo ""
 echo -e "${BLUE}=========================================="
-echo "  强势动能交易系统 - Trend Analysis"
+echo " Trend Analysis"
 echo -e "==========================================${NC}"
 echo ""
 
