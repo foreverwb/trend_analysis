@@ -1,0 +1,3 @@
+"""
+Trend Analysis Backend Package
+"""

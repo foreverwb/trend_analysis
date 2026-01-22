@@ -1,0 +1,103 @@
+# ==============================================================================
+# 强势动能交易系统 - 配置文件
+# Trend Analysis System Configuration
+# ==============================================================================
+
+# IBKR (Interactive Brokers) API 配置
+ibkr:
+  # IB Gateway/TWS 连接配置
+  host: "127.0.0.1"
+  # 端口号: 4001=IB Gateway Live, 4002=IB Gateway Paper, 7496=TWS Live, 7497=TWS Paper
+  port: 4002
+  # 客户端ID (每个连接需要唯一)
+  client_id: 2
+  # 账户ID (可选，留空将使用默认账户)
+  account_id: ""
+  # 连接超时时间 (秒)
+  connection_timeout: 10
+  # 是否启用
+  enabled: true
+
+# Futu OpenD API 配置
+futu:
+  # Futu OpenD 连接配置
+  host: "127.0.0.1"
+  port: 11111
+  # API 密钥 (如需要)
+  api_key: ""
+  api_secret: ""
+  # 每分钟最大请求数
+  max_requests_per_minute: 60
+  # 是否启用
+  enabled: true
+
+# ==============================================================================
+# 数据源选择配置
+# Data Source Selection
+# ==============================================================================
+data_sources:
+  # 期权数据源配置 (OI, IV, 期限结构)
+  # Options data source (Open Interest, Implied Volatility, Term Structure)
+  options_data:
+    # 主数据源: ibkr / futu
+    # Primary source: ibkr / futu
+    primary: futu
+    # 备用数据源 (主数据源失败时使用)
+    # Fallback source when primary fails
+    fallback: ibkr
+    # 是否启用自动降级
+    # Enable auto fallback on failure
+    auto_fallback: true
+  
+  # 市场数据源配置 (股票/ETF 价格)
+  # Market data source (Stock/ETF prices)
+  market_data:
+    # 主数据源: ibkr / futu
+    primary: ibkr
+    # 备用数据源
+    fallback: futu
+    # 是否启用自动降级
+    auto_fallback: true
+
+# 日志配置
+logging:
+  # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+  # 日志格式
+  format: "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
+  # 日志文件路径 (留空则只输出到控制台)
+  file: "logs/app.log"
+  # 是否记录 API 调用详情
+  log_api_calls: true
+  # 是否记录响应数据 (注意: 可能包含敏感信息)
+  log_response_data: false
+  # 日志文件最大大小 (MB)
+  max_file_size: 10
+  # 保留的日志文件数量
+  backup_count: 5
+
+# 服务器配置
+server:
+  host: "0.0.0.0"
+  port: 8000
+  # 是否开启调试模式
+  debug: false
+  # 允许的跨域来源
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://127.0.0.1:3000"
+    - "http://localhost:5173"
+
+# 数据库配置
+database:
+  # SQLite 数据库路径
+  path: "backend/trend_analysis.db"
+  # 是否开启 SQL 回显 (调试用)
+  echo: false
+
+# 缓存配置
+cache:
+  # 市场数据缓存时间 (秒)
+  market_data_ttl: 60
+  # ETF 数据缓存时间 (秒)
+  etf_data_ttl: 300

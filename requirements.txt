@@ -1,0 +1,29 @@
+# FastAPI and web server
+fastapi==0.115.6
+uvicorn==0.34.0
+
+# Database
+sqlalchemy==2.0.36
+
+# Data validation - upgraded for Python 3.13 compatibility
+pydantic==2.10.4
+
+# File handling
+python-multipart==0.0.18
+openpyxl==3.1.5
+
+# Data processing
+pandas==2.2.3
+numpy==2.2.1
+
+# Trading APIs
+ib_insync==0.9.86
+futu-api==9.6.5608
+
+# HTTP clients
+aiohttp==3.11.11
+httpx==0.28.1
+
+# Utilities
+python-dateutil==2.9.0.post0
+PyYAML==6.0.2
