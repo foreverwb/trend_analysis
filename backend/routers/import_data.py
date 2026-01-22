@@ -13,7 +13,7 @@ import io
 from ..database import get_db
 from ..models import (
     FinvizData, MarketChameleonData, ImportLog, 
-    ETFHolding, SectorETF, IndustryETF
+    ETFHolding, SectorETF, IndustryETF, SymbolPool, SymbolETFMapping
 )
 from ..schemas import (
     FinvizImportRequest, FinvizDataItem,
@@ -219,9 +219,13 @@ async def import_marketchameleon_data(
 async def sync_symbol_pool_after_import(db: Session, etf_symbol: str, source: str):
     """导入数据后同步更新标的池状态
     
-    修复 Bug #2.3: 导入数据后"标的池状态明细"没有变化
+    修复 Bug #2.c: 导入数据后"标的池状态明细"Finviz标识有误
+    修复: 导入数据后自动更新ETF的广度评分
     """
-    from ..models import SymbolPool, FinvizData, MarketChameleonData
+    from ..models import SymbolPool, FinvizData, MarketChameleonData, SymbolETFMapping, SectorETF, IndustryETF
+    from ..services.calculation import CalculationService
+    
+    calc_service = CalculationService(db)
     
     # 获取该 ETF 下所有标的的最新数据
     if source == 'finviz':
@@ -231,17 +235,83 @@ async def sync_symbol_pool_after_import(db: Session, etf_symbol: str, source: st
         
         for (ticker,) in tickers:
             symbol = db.query(SymbolPool).filter(SymbolPool.ticker == ticker).first()
-            if symbol:
-                symbol.finviz_status = 'ready'
-                symbol.finviz_last_update = datetime.utcnow()
-                # 重新计算完备度
-                count = 0
-                if symbol.finviz_status == 'ready': count += 1
-                if symbol.mc_status == 'ready': count += 1
-                if symbol.ibkr_status == 'ready': count += 1
-                if symbol.futu_status == 'ready': count += 1
-                symbol.completeness = int((count / 4) * 100)
-                symbol.updated_at = datetime.utcnow()
+            
+            # Bug #2.c 修复: 如果标的不存在，创建它
+            if not symbol:
+                symbol = SymbolPool(
+                    ticker=ticker,
+                    finviz_status='pending',
+                    mc_status='pending',
+                    ibkr_status='pending',
+                    futu_status='pending'
+                )
+                db.add(symbol)
+                db.flush()
+                
+                # 创建ETF映射关系
+                existing_mapping = db.query(SymbolETFMapping).filter(
+                    SymbolETFMapping.ticker == ticker,
+                    SymbolETFMapping.etf_symbol == etf_symbol
+                ).first()
+                
+                if not existing_mapping:
+                    mapping = SymbolETFMapping(
+                        ticker=ticker,
+                        etf_symbol=etf_symbol,
+                        etf_type='sector' if etf_symbol in ['XLK', 'XLF', 'XLE', 'XLV', 'XLY', 'XLI', 'XLC', 'XLP', 'XLU', 'XLRE', 'XLB'] else 'industry',
+                        weight=0,
+                        rank=0
+                    )
+                    db.add(mapping)
+            
+            # 更新状态
+            symbol.finviz_status = 'ready'
+            symbol.finviz_last_update = datetime.utcnow()
+            # 重新计算完备度
+            count = 0
+            if symbol.finviz_status == 'ready': count += 1
+            if symbol.mc_status == 'ready': count += 1
+            if symbol.ibkr_status == 'ready': count += 1
+            if symbol.futu_status == 'ready': count += 1
+            symbol.completeness = int((count / 4) * 100)
+            symbol.updated_at = datetime.utcnow()
+        
+        # 导入 Finviz 数据后，自动更新 ETF 的广度评分
+        finviz_data = db.query(FinvizData).filter(
+            FinvizData.etf_symbol == etf_symbol
+        ).all()
+        
+        if finviz_data:
+            breadth_score, pct_above_50ma, pct_above_200ma = calc_service.calculate_breadth_score(finviz_data)
+            
+            # 更新 Sector ETF
+            sector_etf = db.query(SectorETF).filter(SectorETF.symbol == etf_symbol).first()
+            if sector_etf:
+                sector_etf.breadth_score = breadth_score
+                sector_etf.pct_above_50ma = pct_above_50ma
+                sector_etf.pct_above_200ma = pct_above_200ma
+                # 重新计算综合分
+                sector_etf.composite_score = calc_service.calculate_etf_composite_score(
+                    sector_etf.rel_momentum_score or 0,
+                    sector_etf.trend_quality_score or 0,
+                    breadth_score,
+                    sector_etf.options_score or 0
+                )
+                sector_etf.updated_at = datetime.utcnow()
+            
+            # 更新 Industry ETF
+            industry_etf = db.query(IndustryETF).filter(IndustryETF.symbol == etf_symbol).first()
+            if industry_etf:
+                industry_etf.breadth_score = breadth_score
+                industry_etf.pct_above_50ma = pct_above_50ma
+                industry_etf.pct_above_200ma = pct_above_200ma
+                industry_etf.composite_score = calc_service.calculate_etf_composite_score(
+                    industry_etf.rel_momentum_score or 0,
+                    industry_etf.trend_quality_score or 0,
+                    breadth_score,
+                    industry_etf.options_score or 0
+                )
+                industry_etf.updated_at = datetime.utcnow()
     
     elif source == 'marketchameleon':
         symbols = db.query(MarketChameleonData.symbol).filter(
@@ -250,17 +320,84 @@ async def sync_symbol_pool_after_import(db: Session, etf_symbol: str, source: st
         
         for (ticker,) in symbols:
             symbol = db.query(SymbolPool).filter(SymbolPool.ticker == ticker).first()
-            if symbol:
-                symbol.mc_status = 'ready'
-                symbol.mc_last_update = datetime.utcnow()
-                # 重新计算完备度
-                count = 0
-                if symbol.finviz_status == 'ready': count += 1
-                if symbol.mc_status == 'ready': count += 1
-                if symbol.ibkr_status == 'ready': count += 1
-                if symbol.futu_status == 'ready': count += 1
-                symbol.completeness = int((count / 4) * 100)
-                symbol.updated_at = datetime.utcnow()
+            
+            # Bug #2.c 修复: 如果标的不存在，创建它
+            if not symbol:
+                symbol = SymbolPool(
+                    ticker=ticker,
+                    finviz_status='pending',
+                    mc_status='pending',
+                    ibkr_status='pending',
+                    futu_status='pending'
+                )
+                db.add(symbol)
+                db.flush()
+                
+                # 创建ETF映射关系
+                existing_mapping = db.query(SymbolETFMapping).filter(
+                    SymbolETFMapping.ticker == ticker,
+                    SymbolETFMapping.etf_symbol == etf_symbol
+                ).first()
+                
+                if not existing_mapping:
+                    mapping = SymbolETFMapping(
+                        ticker=ticker,
+                        etf_symbol=etf_symbol,
+                        etf_type='sector' if etf_symbol in ['XLK', 'XLF', 'XLE', 'XLV', 'XLY', 'XLI', 'XLC', 'XLP', 'XLU', 'XLRE', 'XLB'] else 'industry',
+                        weight=0,
+                        rank=0
+                    )
+                    db.add(mapping)
+            
+            # 更新状态
+            symbol.mc_status = 'ready'
+            symbol.mc_last_update = datetime.utcnow()
+            # 重新计算完备度
+            count = 0
+            if symbol.finviz_status == 'ready': count += 1
+            if symbol.mc_status == 'ready': count += 1
+            if symbol.ibkr_status == 'ready': count += 1
+            if symbol.futu_status == 'ready': count += 1
+            symbol.completeness = int((count / 4) * 100)
+            symbol.updated_at = datetime.utcnow()
+        
+        # 导入 MarketChameleon 数据后，自动更新 ETF 的期权评分
+        mc_data = db.query(MarketChameleonData).filter(
+            MarketChameleonData.etf_symbol == etf_symbol
+        ).all()
+        
+        if mc_data:
+            options_score, options_heat, rel_vol, ivr = calc_service.calculate_options_confirm_score(mc_data)
+            
+            # 更新 Sector ETF
+            sector_etf = db.query(SectorETF).filter(SectorETF.symbol == etf_symbol).first()
+            if sector_etf:
+                sector_etf.options_score = options_score
+                sector_etf.options_heat = options_heat
+                sector_etf.rel_vol = rel_vol
+                sector_etf.ivr = ivr
+                sector_etf.composite_score = calc_service.calculate_etf_composite_score(
+                    sector_etf.rel_momentum_score or 0,
+                    sector_etf.trend_quality_score or 0,
+                    sector_etf.breadth_score or 0,
+                    options_score
+                )
+                sector_etf.updated_at = datetime.utcnow()
+            
+            # 更新 Industry ETF
+            industry_etf = db.query(IndustryETF).filter(IndustryETF.symbol == etf_symbol).first()
+            if industry_etf:
+                industry_etf.options_score = options_score
+                industry_etf.options_heat = options_heat
+                industry_etf.rel_vol = rel_vol
+                industry_etf.ivr = ivr
+                industry_etf.composite_score = calc_service.calculate_etf_composite_score(
+                    industry_etf.rel_momentum_score or 0,
+                    industry_etf.trend_quality_score or 0,
+                    industry_etf.breadth_score or 0,
+                    options_score
+                )
+                industry_etf.updated_at = datetime.utcnow()
     
     db.commit()
 

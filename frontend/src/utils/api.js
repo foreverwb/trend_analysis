@@ -207,6 +207,9 @@ export const getImportTemplate = (templateType) => api.get(`/import/template/${t
 // 数据源状态
 export const getDataSourcesStatus = () => api.get('/data-config/sources/status');
 
+// 获取所有可用ETF（用于数据导入选择器）
+export const getAvailableETFs = () => api.get('/data-config/available-etfs');
+
 // 标的池管理
 export const getSymbolPool = (limit = 100, offset = 0) => 
   api.get('/data-config/symbol-pool', { params: { limit, offset } });

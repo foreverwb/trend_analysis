@@ -168,18 +168,19 @@ const App = () => {
         </div>
         
         <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
-          {/* 表头 - 根据是否有扩展数据显示不同列 */}
-          <div className={`grid ${hasExtendedData ? 'grid-cols-16' : 'grid-cols-12'} gap-2 px-4 py-3 bg-slate-100 border-b border-slate-200 font-medium text-xs text-slate-700`}>
-            <div className="col-span-1">#</div>
-            <div className="col-span-2">Ticker</div>
-            <div className="col-span-2 text-right">Weight</div>
+          {/* 表头 - 修复序号列宽度 */}
+          <div className={`grid gap-4 px-4 py-3 bg-slate-100 border-b border-slate-200 font-medium text-xs text-slate-700`}
+               style={{ gridTemplateColumns: hasExtendedData ? '40px 70px 70px 70px 70px 50px 70px 60px' : '40px 70px 1fr' }}>
+            <div>#</div>
+            <div>Ticker</div>
+            <div className="text-right">Weight</div>
             {hasExtendedData && (
               <>
-                <div className="col-span-2 text-right">50DMA</div>
-                <div className="col-span-2 text-right">200DMA</div>
-                <div className="col-span-2 text-right">RSI</div>
-                <div className="col-span-2 text-right">Position</div>
-                <div className="col-span-2 text-right">Term</div>
+                <div className="text-right">50DMA</div>
+                <div className="text-right">200DMA</div>
+                <div className="text-right">RSI</div>
+                <div className="text-right">Position</div>
+                <div className="text-right">Term</div>
               </>
             )}
           </div>
@@ -188,39 +189,40 @@ const App = () => {
             {displayHoldings.map((holding, idx) => (
               <div 
                 key={idx} 
-                className={`grid ${hasExtendedData ? 'grid-cols-16' : 'grid-cols-12'} gap-2 px-4 py-3 text-sm ${
+                className={`grid gap-4 px-4 py-3 text-sm ${
                   idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
                 } hover:bg-blue-50 transition-colors border-b border-slate-100`}
+                style={{ gridTemplateColumns: hasExtendedData ? '40px 70px 70px 70px 70px 50px 70px 60px' : '40px 70px 1fr' }}
               >
-                <div className="col-span-1 text-slate-600 font-medium">#{idx + 1}</div>
-                <div className="col-span-2 font-mono font-bold text-slate-900">{holding.ticker}</div>
-                <div className="col-span-2 text-right font-medium text-blue-600">
+                <div className="text-slate-500 font-medium">#{idx + 1}</div>
+                <div className="font-mono font-bold text-slate-900">{holding.ticker}</div>
+                <div className="text-right font-medium text-blue-600">
                   {typeof holding.weight === 'number' ? holding.weight.toFixed(2) : holding.weight}%
                 </div>
                 {hasExtendedData && (
                   <>
-                    <div className={`col-span-2 text-right font-medium ${
+                    <div className={`text-right font-medium ${
                       holding.sma50 > 0 ? 'text-emerald-600' : holding.sma50 < 0 ? 'text-red-600' : 'text-slate-400'
                     }`}>
                       {holding.sma50 !== null && holding.sma50 !== undefined 
                         ? `${holding.sma50 > 0 ? '+' : ''}${holding.sma50.toFixed(2)}%` 
                         : '-'}
                     </div>
-                    <div className={`col-span-2 text-right font-medium ${
+                    <div className={`text-right font-medium ${
                       holding.sma200 > 0 ? 'text-emerald-600' : holding.sma200 < 0 ? 'text-red-600' : 'text-slate-400'
                     }`}>
                       {holding.sma200 !== null && holding.sma200 !== undefined 
                         ? `${holding.sma200 > 0 ? '+' : ''}${holding.sma200.toFixed(2)}%` 
                         : '-'}
                     </div>
-                    <div className={`col-span-2 text-right font-medium ${
+                    <div className={`text-right font-medium ${
                       holding.rsi > 70 ? 'text-red-600' : holding.rsi < 30 ? 'text-emerald-600' : 'text-slate-600'
                     }`}>
                       {holding.rsi !== null && holding.rsi !== undefined 
                         ? holding.rsi.toFixed(1) 
                         : '-'}
                     </div>
-                    <div className={`col-span-2 text-right font-medium ${
+                    <div className={`text-right font-medium ${
                       holding.positioning_score > 60 ? 'text-emerald-600' : 
                       holding.positioning_score < 40 ? 'text-red-600' : 'text-amber-600'
                     }`}>
@@ -228,7 +230,7 @@ const App = () => {
                         ? holding.positioning_score.toFixed(0) 
                         : '-'}
                     </div>
-                    <div className={`col-span-2 text-right font-medium ${
+                    <div className={`text-right font-medium ${
                       holding.term_score > 0 ? 'text-red-600' : 
                       holding.term_score < 0 ? 'text-emerald-600' : 'text-slate-600'
                     }`}>

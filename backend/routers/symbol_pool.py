@@ -262,6 +262,47 @@ async def sync_symbol_pool(db: Session = Depends(get_db)):
 
 
 # ==================== ETF配置管理 ====================
+@router.get("/available-etfs")
+async def get_available_etfs(db: Session = Depends(get_db)):
+    """获取所有可用的ETF列表（包括没有holdings的）
+    用于数据导入选择器
+    """
+    sector_etfs = []
+    industry_etfs = []
+    
+    # 获取所有板块ETF
+    for symbol, name in SECTOR_ETF_NAMES.items():
+        # 检查是否有holdings
+        holdings_count = db.query(ETFHolding).filter(
+            ETFHolding.sector_etf_symbol == symbol
+        ).count()
+        
+        sector_etfs.append({
+            "symbol": symbol,
+            "name": name,
+            "has_holdings": holdings_count > 0,
+            "holdings_count": holdings_count
+        })
+    
+    # 获取所有行业ETF
+    for symbol, name in INDUSTRY_ETF_NAMES.items():
+        holdings_count = db.query(ETFHolding).filter(
+            ETFHolding.industry_etf_symbol == symbol
+        ).count()
+        
+        industry_etfs.append({
+            "symbol": symbol,
+            "name": name,
+            "has_holdings": holdings_count > 0,
+            "holdings_count": holdings_count
+        })
+    
+    return {
+        "sector_etfs": sector_etfs,
+        "industry_etfs": industry_etfs
+    }
+
+
 @router.get("/etf-configs", response_model=ETFConfigListResponse)
 async def get_etf_configs(db: Session = Depends(get_db)):
     """获取所有ETF更新配置
