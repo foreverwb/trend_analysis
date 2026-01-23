@@ -291,20 +291,38 @@ async def fetch_futu_data(symbol: str, rate_limiter: RateLimiter, underlying_pri
         # 获取期权数据（不再调用 get_market_snapshot，因为 Futu 没有美股行情权限）
         positioning_data = None
         term_data = None
+        positioning_error = None
+        term_error = None
         
         try:
             positioning_data = await futu.calculate_positioning_score(symbol)
-        except Exception:
-            pass
+        except Exception as e:
+            positioning_error = str(e)
         
         try:
             # 传递 underlying_price 用于计算 ATM strike
             term_data = await futu.calculate_term_score(symbol, underlying_price)
-        except Exception:
-            pass
+        except Exception as e:
+            term_error = str(e)
         
         # 判断成功：至少获取到 positioning 或 term 数据之一
         success = positioning_data is not None or term_data is not None
+        
+        # 构建错误信息
+        error_msg = None
+        if not success:
+            errors = []
+            if positioning_error:
+                errors.append(f"positioning: {positioning_error}")
+            if term_error:
+                errors.append(f"term: {term_error}")
+            if not errors:
+                if underlying_price is None:
+                    error_msg = "无标的价格，无法计算IV数据"
+                else:
+                    error_msg = "期权数据不可用"
+            else:
+                error_msg = "; ".join(errors)
         
         return {
             "success": success,
@@ -313,6 +331,7 @@ async def fetch_futu_data(symbol: str, rate_limiter: RateLimiter, underlying_pri
             "snapshot_data": None,  # Futu 没有美股行情权限
             "positioning_data": positioning_data,
             "term_data": term_data,
+            "error": error_msg,
             "timestamp": datetime.now()
         }
         
@@ -587,6 +606,10 @@ async def batch_update_task(session_id: str, symbols: List[str], sources: List[s
                         if result.get("success") and result.get("market_data"):
                             market_data = result["market_data"]
                             underlying_price = market_data.get("price")
+                            if underlying_price is None:
+                                logger.debug(f"{symbol} - IBKR 返回数据但价格为空")
+                        else:
+                            logger.debug(f"{symbol} - IBKR 获取失败: {result.get('error', '无数据')}")
                             
                     elif source == "futu":
                         result = await fetch_futu_data(symbol, _futu_rate_limiter, underlying_price)
@@ -638,15 +661,21 @@ async def batch_update_task(session_id: str, symbols: List[str], sources: List[s
                     # 更新期权数据（Futu）
                     if positioning_data:
                         pool_record.positioning_score = positioning_data.get("positioning_score")
+                        pool_record.total_oi = positioning_data.get("total_oi")
+                        pool_record.delta_oi_1d = positioning_data.get("delta_oi_1d")
                         pool_record.futu_status = "ready"
                         pool_record.futu_last_update = datetime.now()
                     
                     if term_data:
                         pool_record.term_score = term_data.get("slope")
+                        pool_record.iv7 = term_data.get("iv7")
                         pool_record.iv30 = term_data.get("iv30")
                         pool_record.iv60 = term_data.get("iv60")
                         pool_record.iv90 = term_data.get("iv90")
                         pool_record.iv_slope = term_data.get("slope")
+                        # 如果 positioning_data 没有 total_oi，从 term_data 获取
+                        if not pool_record.total_oi and term_data.get("total_oi"):
+                            pool_record.total_oi = term_data.get("total_oi")
                     
                     db.commit()
                 except Exception as e:
@@ -684,6 +713,17 @@ async def batch_update_task(session_id: str, symbols: List[str], sources: List[s
                     log_parts.append("|")
                     log_parts.extend(iv_parts)
                 
+                # OI 信息
+                if positioning_data:
+                    total_oi = positioning_data.get("total_oi")
+                    delta_oi = positioning_data.get("delta_oi_1d")
+                    if total_oi:
+                        oi_str = f"OI={total_oi:,}"
+                        if delta_oi is not None:
+                            sign = "+" if delta_oi >= 0 else ""
+                            oi_str += f" (Δ{sign}{delta_oi:,})"
+                        log_parts.append(f"| {oi_str}")
+                
                 # Positioning Score 信息
                 if positioning_data:
                     ps = positioning_data.get("positioning_score")
@@ -706,6 +746,18 @@ async def batch_update_task(session_id: str, symbols: List[str], sources: List[s
                     error_hint = "连接失败"
                 elif "期权" in error_msg or "option" in error_msg.lower():
                     error_hint = "无期权数据"
+                elif "标的价格" in error_msg or "underlying" in error_msg.lower():
+                    error_hint = "无法获取标的价格"
+                elif "price" in error_msg.lower() or "价格" in error_msg:
+                    error_hint = "价格数据不可用"
+                elif error_msg == "未知错误":
+                    # 尝试根据数据源给出更有意义的提示
+                    if error_source == "FUTU":
+                        error_hint = "Futu期权数据不可用"
+                    elif error_source == "IBKR":
+                        error_hint = "IBKR市场数据不可用"
+                    else:
+                        error_hint = "数据获取失败"
                 else:
                     error_hint = error_msg[:30] if len(error_msg) > 30 else error_msg
                 

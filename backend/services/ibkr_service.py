@@ -111,9 +111,9 @@ class IBKRService:
         return self._connected and self.ib and self.ib.isConnected()
     
     async def get_market_data(self, symbol: str, sec_type: str = "STK") -> Optional[Dict]:
-        """Get current market data for a symbol
+        """Get market data for a symbol using historical data
         
-        使用延迟数据（免费），字段名为 delayedLast, delayedClose 等
+        盘后分析模式：使用 reqHistoricalData 获取最近收盘价
         """
         start_time = time.time()
         endpoint = f"market_data/{symbol}"
@@ -147,57 +147,49 @@ class IBKRService:
                     logger.debug(f"{symbol} - 合约验证超时")
                     return None
                 
-                # 请求市场数据
-                ticker = self.ib.reqMktData(contract, "", False, False)
-                await asyncio.sleep(2)  # Wait for data
+                # 使用 reqHistoricalData 获取历史数据（盘后分析模式）
+                bars = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: self.ib.reqHistoricalData(
+                            contract,
+                            endDateTime='',
+                            durationStr='5 D',
+                            barSizeSetting='1 day',
+                            whatToShow='TRADES',
+                            useRTH=True,
+                            formatDate=1
+                        )
+                    ),
+                    timeout=self.historical_timeout
+                )
                 
-                # 解析价格数据
-                price = None
-                price_source = "none"
+                if not bars or len(bars) == 0:
+                    logger.warning(f"{symbol} - 无历史数据")
+                    return None
                 
-                # 尝试延迟数据
-                if hasattr(ticker, 'delayedLast') and ticker.delayedLast is not None and ticker.delayedLast > 0:
-                    price = ticker.delayedLast
-                    price_source = "delayedLast"
-                elif hasattr(ticker, 'delayedClose') and ticker.delayedClose is not None and ticker.delayedClose > 0:
-                    price = ticker.delayedClose
-                    price_source = "delayedClose"
-                # 尝试实时数据作为备用
-                elif ticker.last is not None and ticker.last > 0:
-                    price = ticker.last
-                    price_source = "last"
-                elif ticker.close is not None and ticker.close > 0:
-                    price = ticker.close
-                    price_source = "close"
-                # 最后尝试 bid/ask 中点
-                else:
-                    bid = getattr(ticker, 'delayedBid', None) or ticker.bid
-                    ask = getattr(ticker, 'delayedAsk', None) or ticker.ask
-                    if bid and ask and bid > 0 and ask > 0:
-                        price = (bid + ask) / 2
-                        price_source = "bid_ask_mid"
+                # 使用最后一根K线
+                last_bar = bars[-1]
                 
                 data = {
                     "symbol": symbol,
-                    "price": price,
-                    "bid": getattr(ticker, 'delayedBid', None) or ticker.bid,
-                    "ask": getattr(ticker, 'delayedAsk', None) or ticker.ask,
-                    "volume": getattr(ticker, 'delayedVolume', None) or ticker.volume,
-                    "high": getattr(ticker, 'delayedHigh', None) or ticker.high,
-                    "low": getattr(ticker, 'delayedLow', None) or ticker.low,
-                    "open": getattr(ticker, 'delayedOpen', None) or ticker.open,
-                    "close": getattr(ticker, 'delayedClose', None) or ticker.close,
+                    "price": last_bar.close,
+                    "price_source": "historical",
+                    "open": last_bar.open,
+                    "high": last_bar.high,
+                    "low": last_bar.low,
+                    "close": last_bar.close,
+                    "volume": last_bar.volume,
+                    "bar_date": str(last_bar.date),
                     "timestamp": datetime.now()
                 }
-                
-                # 取消订阅
-                self.ib.cancelMktData(contract)
                 
                 duration_ms = (time.time() - start_time) * 1000
                 
                 if self.log_api_calls:
                     api_logger.log_response("GET", endpoint, "success", duration_ms, 
-                        data={"price": data["price"]}, log_data=self.log_response_data)
+                        data={"price": data["price"], "date": data["bar_date"]}, 
+                        log_data=self.log_response_data)
                 
                 return data
                 

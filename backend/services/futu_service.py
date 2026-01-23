@@ -1,13 +1,24 @@
 """
 Futu OpenAPI Service for Options Data
 Provides PositioningScore and TermScore calculations
-Enhanced with comprehensive logging and config file support
+
+借鉴 volatility_analysis 项目的最佳实践:
+1. 使用 delta ≈ 0.5 选择 ATM 期权
+2. 从 get_market_snapshot 获取 IV 和 OI
+3. 使用方差插值计算 IV30/IV60/IV90
+4. OI 缓存支持 ΔOI 计算
 """
 import asyncio
+import json
+import os
 import time
-from typing import Optional, Dict, List, Any
+import threading
+from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime, timedelta
+from dataclasses import dataclass
+from collections import defaultdict
 import logging
+
 from futu import OpenQuoteContext, RET_OK, Market, OptionType, OptionCondType
 
 from ..config_loader import get_current_config
@@ -16,6 +27,255 @@ from ..logging_utils import get_api_logger, LogContext
 logger = logging.getLogger(__name__)
 api_logger = get_api_logger("FUTU")
 
+# OI 缓存配置
+OI_CACHE_FILE = "oi_cache.json"
+CACHE_LOCK = threading.Lock()
+
+
+class RateLimiter:
+    """
+    速率限制器（借鉴 volatility_analysis）
+    
+    Futu API 限制：
+    - get_option_chain: 10次/30秒
+    - get_market_snapshot: 60次/30秒
+    """
+    def __init__(self, max_calls: int, period_seconds: int):
+        self.max_calls = max_calls
+        self.period_seconds = period_seconds
+        self.calls: List[float] = []
+        self._lock = threading.Lock()
+    
+    async def acquire(self):
+        """获取配额（异步版本）"""
+        with self._lock:
+            now = time.time()
+            # 清理过期的调用记录
+            self.calls = [t for t in self.calls if now - t < self.period_seconds]
+            
+            if len(self.calls) >= self.max_calls:
+                # 需要等待
+                sleep_seconds = self.period_seconds - (now - self.calls[0]) + 0.1
+                if sleep_seconds > 0:
+                    logger.info(f"速率限制，等待 {sleep_seconds:.1f}s")
+                    await asyncio.sleep(sleep_seconds)
+                    # 重新清理
+                    now = time.time()
+                    self.calls = [t for t in self.calls if now - t < self.period_seconds]
+            
+            self.calls.append(time.time())
+
+
+@dataclass
+class OptionContract:
+    """期权合约信息"""
+    code: str
+    option_type: str  # "CALL" or "PUT"
+    strike_price: float
+    expiry_date: str
+
+
+@dataclass
+class IVTermResult:
+    """IV 期限结构结果"""
+    iv7: Optional[float] = None
+    iv30: Optional[float] = None
+    iv60: Optional[float] = None
+    iv90: Optional[float] = None
+    total_oi: Optional[int] = None
+    raw_data: Optional[Dict[int, float]] = None
+
+
+# ==================== OI 缓存函数 ====================
+
+def load_oi_cache() -> dict:
+    """加载 OI 缓存（线程安全）"""
+    with CACHE_LOCK:
+        if not os.path.exists(OI_CACHE_FILE):
+            return {}
+        try:
+            with open(OI_CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+
+def save_oi_cache(cache: dict) -> None:
+    """保存 OI 缓存（线程安全）"""
+    with CACHE_LOCK:
+        try:
+            with open(OI_CACHE_FILE, 'w') as f:
+                json.dump(cache, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save OI cache: {e}")
+
+
+def compute_delta_oi(symbol: str, current_oi: int) -> Tuple[int, Optional[int]]:
+    """
+    计算 ΔOI（当前 OI - 昨日 OI）
+    
+    Returns:
+        (current_oi, delta_oi) - delta_oi 可能为 None（首次运行）
+    """
+    if current_oi is None:
+        return (None, None)
+    
+    cache = load_oi_cache()
+    today = datetime.now().strftime('%Y-%m-%d')
+    
+    # 查找最近的历史数据（考虑周末/节假日）
+    symbol_cache = cache.get(symbol, {})
+    yesterday_oi = None
+    
+    for days_ago in range(1, 8):  # 最多向前查找 7 天
+        past_date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+        if past_date in symbol_cache:
+            yesterday_oi = symbol_cache[past_date]
+            break
+    
+    # 计算 delta
+    delta_oi = current_oi - yesterday_oi if yesterday_oi is not None else None
+    
+    # 更新缓存
+    if symbol not in cache:
+        cache[symbol] = {}
+    cache[symbol][today] = current_oi
+    
+    # 清理超过 7 天的数据
+    cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    cache[symbol] = {
+        date: oi for date, oi in cache[symbol].items()
+        if date >= cutoff
+    }
+    
+    save_oi_cache(cache)
+    return (current_oi, delta_oi)
+
+
+# ==================== IV 计算辅助函数 ====================
+
+def _normalize_iv(iv_value: float) -> float:
+    """
+    标准化 IV 值为百分比形式
+    Futu IV 可能是小数形式(0.35)或百分比形式(35.0)
+    """
+    iv = float(iv_value)
+    if iv <= 1.5:  # 小数形式
+        return iv * 100.0
+    return iv  # 已经是百分比形式
+
+
+def _variance_interpolation(
+    lower: Tuple[int, float],
+    upper: Tuple[int, float],
+    target_day: int
+) -> float:
+    """
+    方差插值法计算目标 DTE 的 IV
+    比线性插值更准确地反映波动率期限结构
+    """
+    d1, iv1 = lower
+    d2, iv2 = upper
+    if d2 == d1:
+        return iv1
+    
+    # 转换为方差
+    var1 = (iv1 / 100.0) ** 2
+    var2 = (iv2 / 100.0) ** 2
+    
+    # 线性插值方差
+    weight = (target_day - d1) / (d2 - d1)
+    var_t = var1 + (var2 - var1) * weight
+    
+    # 转换回 IV
+    return (var_t ** 0.5) * 100.0
+
+
+def _interpolate_iv(points: List[Tuple[int, float]], target_day: int) -> Optional[float]:
+    """
+    插值计算目标 DTE 的 IV
+    
+    Args:
+        points: [(dte, iv), ...] 已排序的 DTE-IV 数据点
+        target_day: 目标 DTE（如 30, 60, 90）
+    
+    Returns:
+        插值后的 IV（百分比形式）
+    """
+    if not points:
+        return None
+    if len(points) == 1:
+        return points[0][1]
+    
+    lower = None
+    upper = None
+    
+    for dte, iv in points:
+        if dte == target_day:
+            return iv
+        if dte < target_day:
+            lower = (dte, iv)
+        if dte > target_day and upper is None:
+            upper = (dte, iv)
+            break
+    
+    if lower and upper:
+        return _variance_interpolation(lower, upper, target_day)
+    if lower:
+        return lower[1]
+    if upper:
+        return upper[1]
+    return None
+
+
+def _get_snapshot_value(snapshot: Dict, keys: List[str]) -> Optional[float]:
+    """从快照中获取指定字段的值"""
+    for key in keys:
+        if key in snapshot and snapshot[key] is not None:
+            try:
+                return float(snapshot[key])
+            except Exception:
+                return None
+    return None
+
+
+def _pick_atm_iv_by_delta(
+    option_contracts: List[OptionContract],
+    snapshot_map: Dict[str, Dict]
+) -> Optional[float]:
+    """
+    使用 delta ≈ 0.5 选择 ATM 期权的 IV
+    这比通过 strike price 推断更准确
+    """
+    best_iv = None
+    best_diff = None
+    
+    for contract in option_contracts:
+        # 只使用 CALL 期权
+        if contract.option_type != "CALL":
+            continue
+        
+        snapshot = snapshot_map.get(contract.code)
+        if not snapshot:
+            continue
+        
+        # 获取 delta 和 IV
+        delta = _get_snapshot_value(snapshot, ["option_delta", "delta"])
+        iv = _get_snapshot_value(snapshot, ["option_implied_volatility", "implied_volatility", "iv"])
+        
+        if delta is None or iv is None:
+            continue
+        
+        # 选择 delta 最接近 0.5 的期权
+        diff = abs(delta - 0.5)
+        if best_diff is None or diff < best_diff:
+            best_diff = diff
+            best_iv = _normalize_iv(iv)
+    
+    return best_iv
+
+
+# ==================== FutuService 类 ====================
 
 class FutuService:
     """Futu OpenAPI Service for options data retrieval"""
@@ -33,7 +293,11 @@ class FutuService:
         self._context: Optional[OpenQuoteContext] = None
         self._connected = False
         
-        # Rate limiting
+        # 专用速率限制器（按 Futu API 限制）
+        self._chain_limiter = RateLimiter(max_calls=10, period_seconds=30)
+        self._snapshot_limiter = RateLimiter(max_calls=60, period_seconds=30)
+        
+        # 通用速率限制（向后兼容）
         self._request_count = 0
         self._last_reset = datetime.now()
         self._max_requests_per_minute = config.futu.max_requests_per_minute
@@ -89,7 +353,7 @@ class FutuService:
         return self._connected and self._context is not None
     
     async def _rate_limit_check(self):
-        """Check and enforce rate limiting"""
+        """Check and enforce rate limiting (通用，向后兼容)"""
         now = datetime.now()
         if (now - self._last_reset).total_seconds() > 60:
             self._request_count = 0
@@ -105,6 +369,49 @@ class FutuService:
         
         self._request_count += 1
     
+    async def _fetch_option_chain_with_retry(
+        self, 
+        code: str, 
+        start_date: str, 
+        end_date: str,
+        max_retries: int = 2
+    ) -> Tuple[int, Any]:
+        """
+        获取期权链（带重试和频率检测）
+        
+        Args:
+            code: 股票代码（如 US.AAPL）
+            start_date: 开始日期
+            end_date: 结束日期
+            max_retries: 最大重试次数
+        """
+        last_data = None
+        
+        for attempt in range(max_retries + 1):
+            ret, data = self._context.get_option_chain(
+                code=code,
+                start=start_date,
+                end=end_date,
+                option_cond_type=OptionCondType.ALL
+            )
+            last_data = data
+            
+            if ret == RET_OK:
+                return ret, data
+            
+            # 检测频率限制错误
+            if isinstance(data, str) and ("频率" in data or "rate" in data.lower() or "limit" in data.lower()):
+                if attempt < max_retries:
+                    wait_time = 30.0  # Futu 的限制周期是 30 秒
+                    logger.warning(f"触发频率限制，等待 {wait_time}s 后重试 ({attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    continue
+            
+            # 其他错误直接返回
+            return ret, data
+        
+        return ret, last_data
+    
     async def get_option_chain(self, symbol: str) -> Optional[List[Dict]]:
         """Get option chain for a symbol"""
         start_time = time.time()
@@ -117,10 +424,11 @@ class FutuService:
             if not await self.connect():
                 return None
         
-        await self._rate_limit_check()
-        
         try:
             us_symbol = f"US.{symbol}"
+            
+            # 使用 chain_limiter
+            await self._chain_limiter.acquire()
             
             # Get option expiry dates
             ret, data = self._context.get_option_expiration_date(code=us_symbol)
@@ -135,7 +443,8 @@ class FutuService:
             # Get option chain for nearest expirations
             all_options = []
             for expiry in expiry_dates[:4]:  # Get first 4 expirations
-                await self._rate_limit_check()
+                # 使用 chain_limiter
+                await self._chain_limiter.acquire()
                 
                 ret, data = self._context.get_option_chain(
                     code=us_symbol,
@@ -180,7 +489,8 @@ class FutuService:
             if not await self.connect():
                 return None
         
-        await self._rate_limit_check()
+        # 使用 snapshot_limiter
+        await self._snapshot_limiter.acquire()
         
         try:
             # Convert to US stock format
@@ -223,14 +533,17 @@ class FutuService:
     
     async def get_option_iv_data(self, symbol: str, underlying_price: float = None) -> Optional[Dict]:
         """
-        Get implied volatility data for term structure calculation
+        获取 IV 期限结构数据 (IV7/IV30/IV60/IV90)
         
-        注意: Futu get_option_chain 只返回静态数据，不含 IV
-        需要先获取期权代码，然后通过 get_market_snapshot 获取包含 IV 的动态数据
+        借鉴 volatility_analysis 的实现:
+        1. 使用日期窗口滑动获取期权链（不依赖 get_option_expiration_date）
+        2. 使用 delta ≈ 0.5 选择 ATM 期权
+        3. 从 get_market_snapshot 获取 IV
+        4. 使用方差插值计算目标 DTE 的 IV
         
         Args:
             symbol: 股票代码
-            underlying_price: 标的价格（从IBKR获取，避免调用Futu行情接口）
+            underlying_price: 标的价格（可选，用于备选 ATM 判断）
         """
         start_time = time.time()
         endpoint = f"option_iv/{symbol}"
@@ -242,161 +555,195 @@ class FutuService:
             if not await self.connect():
                 return None
         
-        await self._rate_limit_check()
-        
         try:
             us_symbol = f"US.{symbol}"
-            
-            # Get option expiry dates
-            ret, data = self._context.get_option_expiration_date(code=us_symbol)
-            if ret != RET_OK:
-                logger.warning(f"无法获取 {symbol} 的期权到期日: {data}")
-                return None
-            
-            expiry_dates = data['strike_time'].tolist() if 'strike_time' in data.columns else []
-            
-            if len(expiry_dates) < 3:
-                logger.warning(f"{symbol} 期权到期日不足3个: {len(expiry_dates)}")
-                return None
-            
-            # 如果没有提供价格，尝试从期权链数据推断 ATM strike
-            if underlying_price is None:
-                ret, first_chain = self._context.get_option_chain(
-                    code=us_symbol,
-                    start=expiry_dates[0],
-                    end=expiry_dates[0],
-                    option_cond_type=OptionCondType.ALL
-                )
-                if ret == RET_OK and len(first_chain) > 0:
-                    strikes = sorted(first_chain["strike_price"].unique())
-                    underlying_price = strikes[len(strikes) // 2]
-                else:
-                    logger.warning(f"无法推断 {symbol} 的标的价格")
-                    return None
-            
-            # Calculate days to expiry and collect IV
             today = datetime.now().date()
-            iv_by_dte = {}
+            max_days = 120  # 最多查看 120 天
+            window_days = 30  # 每次查询 30 天的窗口
             
-            for expiry in expiry_dates[:6]:
-                await self._rate_limit_check()
+            # 使用日期窗口滑动获取期权链（借鉴 volatility_analysis）
+            expirations: Dict[str, List[OptionContract]] = defaultdict(list)
+            
+            window_start = today
+            end_date = today + timedelta(days=max_days)
+            
+            while window_start <= end_date:
+                window_end = min(window_start + timedelta(days=window_days), end_date)
                 
-                expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
-                dte = (expiry_date - today).days
+                # 使用 chain_limiter（10次/30秒）
+                await self._chain_limiter.acquire()
                 
-                if dte <= 0:
-                    continue
-                
-                # 获取期权链（静态数据）以获得期权代码
-                ret, chain_data = self._context.get_option_chain(
-                    code=us_symbol,
-                    start=expiry,
-                    end=expiry,
-                    option_cond_type=OptionCondType.ALL
+                # 获取期权链（带重试）
+                ret, chain_data = await self._fetch_option_chain_with_retry(
+                    us_symbol,
+                    window_start.strftime("%Y-%m-%d"),
+                    window_end.strftime("%Y-%m-%d")
                 )
                 
-                if ret != RET_OK or len(chain_data) == 0:
-                    continue
-                
-                # Find ATM strike
-                strikes = chain_data["strike_price"].unique()
-                atm_strike = min(strikes, key=lambda x: abs(x - underlying_price))
-                
-                # 获取 ATM 期权代码
-                atm_options = chain_data[chain_data["strike_price"] == atm_strike]
-                if len(atm_options) == 0:
-                    continue
-                
-                # 获取 CALL 期权代码
-                call_options = atm_options[atm_options["option_type"] == "CALL"]
-                if len(call_options) == 0:
-                    continue
-                
-                option_codes = call_options["code"].tolist()
-                
-                if not option_codes:
-                    continue
-                
-                # 方法1: 尝试通过 get_market_snapshot 获取 IV
-                # get_market_snapshot 返回的期权数据包含 option_implied_volatility 字段
-                await self._rate_limit_check()
-                
-                try:
-                    ret, snapshot_data = self._context.get_market_snapshot(option_codes[:1])  # 只取第一个
-                    
-                    if ret == RET_OK and len(snapshot_data) > 0:
-                        # 尝试从 snapshot 中获取 IV
-                        # 字段可能是 'option_implied_volatility' 或 'implied_volatility'
-                        iv_value = None
+                if ret == RET_OK and len(chain_data) > 0:
+                    for _, row in chain_data.iterrows():
+                        code = row.get("code")
+                        opt_type = row.get("option_type", "")
+                        strike = row.get("strike_price", 0)
                         
-                        for col in ['option_implied_volatility', 'implied_volatility']:
-                            if col in snapshot_data.columns:
-                                iv_raw = snapshot_data[col].iloc[0]
-                                if pd.notna(iv_raw) and iv_raw > 0:
-                                    iv_value = float(iv_raw)
-                                    break
+                        # 从返回数据中提取到期日（尝试多个字段名）
+                        expiry = None
+                        for key in ["expiry_date", "expire_date", "expiration_date", "expiry", "strike_time"]:
+                            if key in row and row[key]:
+                                expiry = str(row[key]).split()[0]  # 去掉可能的时间部分
+                                break
                         
-                        if iv_value and iv_value > 0:
-                            # Futu IV 可能是百分比形式（如 35.5 表示 35.5%）
-                            # 统一转换为小数形式存储
-                            if iv_value > 5:  # 如果大于5，可能是百分比形式
-                                iv_value = iv_value / 100.0
-                            iv_by_dte[dte] = iv_value
-                            logger.debug(f"{symbol} DTE={dte}: IV={iv_value:.4f}")
-                            
-                except Exception as snapshot_err:
-                    logger.debug(f"get_market_snapshot 获取 {symbol} IV 失败: {snapshot_err}")
+                        if code and opt_type and expiry:
+                            opt_type_str = "CALL" if "CALL" in str(opt_type).upper() else "PUT"
+                            expirations[expiry].append(OptionContract(
+                                code=code,
+                                option_type=opt_type_str,
+                                strike_price=strike,
+                                expiry_date=expiry
+                            ))
+                
+                window_start = window_end + timedelta(days=1)
             
-            # Interpolate to get IV30, IV60, IV90
-            if len(iv_by_dte) < 2:
-                logger.warning(f"{symbol} 有效 IV 数据点不足: {len(iv_by_dte)}")
+            if not expirations:
+                logger.warning(f"{symbol}: 无可用期权数据")
                 return None
             
-            dtes = sorted(iv_by_dte.keys())
-            ivs = [iv_by_dte[d] for d in dtes]
+            logger.info(f"{symbol} 获取到 {len(expirations)} 个到期日的期权数据")
             
-            logger.debug(f"{symbol} IV 数据: {dict(zip(dtes, ivs))}")
+            # 批量获取期权快照（获取 delta 和 IV）
+            all_codes = []
+            for contracts in expirations.values():
+                all_codes.extend(c.code for c in contracts)
             
-            # Simple linear interpolation
-            def interpolate_iv(target_dte):
-                if target_dte <= dtes[0]:
-                    return ivs[0]
-                if target_dte >= dtes[-1]:
-                    return ivs[-1]
+            logger.info(f"{symbol} 共 {len(all_codes)} 个期权合约，开始获取快照")
+            
+            snapshot_map: Dict[str, Dict] = {}
+            chunk_size = 400  # Futu 每次最多查询 400 个
+            
+            for idx in range(0, len(all_codes), chunk_size):
+                batch = all_codes[idx:idx + chunk_size]
+                # 使用 snapshot_limiter（60次/30秒）
+                await self._snapshot_limiter.acquire()
                 
-                for i in range(len(dtes) - 1):
-                    if dtes[i] <= target_dte <= dtes[i+1]:
-                        ratio = (target_dte - dtes[i]) / (dtes[i+1] - dtes[i])
-                        return ivs[i] + ratio * (ivs[i+1] - ivs[i])
-                return ivs[-1]
+                ret, snap_data = self._context.get_market_snapshot(batch)
+                if ret != RET_OK:
+                    logger.debug(f"快照获取失败: {snap_data}")
+                    continue
+                
+                for _, row in snap_data.iterrows():
+                    code = row.get("code")
+                    if code:
+                        snapshot_map[code] = row.to_dict()
             
-            iv30 = interpolate_iv(30)
-            iv60 = interpolate_iv(60)
-            iv90 = interpolate_iv(90)
+            if not snapshot_map:
+                logger.warning(f"{symbol}: 无法获取期权快照数据")
+                return None
             
-            slope = iv30 - iv90
+            # 为每个到期日选择 ATM IV（使用 delta ≈ 0.5）
+            dte_points: List[Tuple[int, float]] = []
+            total_oi = 0
+            
+            for expiry, contracts in expirations.items():
+                try:
+                    # 解析日期
+                    expiry_date = None
+                    for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y%m%d"]:
+                        try:
+                            expiry_date = datetime.strptime(expiry, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if expiry_date is None:
+                        continue
+                    
+                    dte = (expiry_date - today).days
+                    if dte <= 0:
+                        continue
+                    
+                    # 使用 delta 选择 ATM IV
+                    chosen_iv = _pick_atm_iv_by_delta(contracts, snapshot_map)
+                    
+                    # 备选方案：如果 delta 方法失败，使用 strike price
+                    if chosen_iv is None and underlying_price:
+                        for contract in contracts:
+                            if contract.option_type != "CALL":
+                                continue
+                            snapshot = snapshot_map.get(contract.code)
+                            if not snapshot:
+                                continue
+                            
+                            if abs(contract.strike_price - underlying_price) / underlying_price < 0.05:
+                                iv = _get_snapshot_value(snapshot, 
+                                    ["option_implied_volatility", "implied_volatility", "iv"])
+                                if iv:
+                                    chosen_iv = _normalize_iv(iv)
+                                    break
+                    
+                    if chosen_iv is not None:
+                        dte_points.append((dte, chosen_iv))
+                        logger.debug(f"{symbol} DTE={dte}: IV={chosen_iv:.2f}%")
+                    
+                    # 统计 OI
+                    for contract in contracts:
+                        snapshot = snapshot_map.get(contract.code)
+                        if snapshot:
+                            oi = _get_snapshot_value(snapshot, 
+                                ["option_open_interest", "open_interest", "oi"])
+                            if oi:
+                                total_oi += int(oi)
+                    
+                except Exception as e:
+                    logger.debug(f"处理 {symbol} 到期日 {expiry} 失败: {e}")
+                    continue
+            
+            # 排序并插值计算 IV7/IV30/IV60/IV90
+            dte_points.sort(key=lambda x: x[0])
+            
+            if len(dte_points) < 2:
+                logger.warning(f"{symbol} 有效 IV 数据点不足: {len(dte_points)}")
+                return None
+            
+            iv7 = _interpolate_iv(dte_points, 7)
+            iv30 = _interpolate_iv(dte_points, 30)
+            iv60 = _interpolate_iv(dte_points, 60)
+            iv90 = _interpolate_iv(dte_points, 90)
+            
+            # 计算斜率（IV30 - IV90）
+            slope = (iv30 - iv90) if iv30 and iv90 else None
             
             duration_ms = (time.time() - start_time) * 1000
+            
             if self.log_api_calls:
                 api_logger.log_response("GET", endpoint, "success", duration_ms,
-                                       {"iv30": iv30, "iv60": iv60, "iv90": iv90} if self.log_response_data else None,
-                                       self.log_response_data)
+                    {"iv30": iv30, "iv60": iv60, "iv90": iv90} if self.log_response_data else None,
+                    self.log_response_data)
+            
+            logger.info(f"{symbol} IV: IV7={iv7:.1f}% IV30={iv30:.1f}% IV60={iv60:.1f}% IV90={iv90:.1f}%")
             
             return {
                 "symbol": symbol,
+                "iv7": iv7,
                 "iv30": iv30,
                 "iv60": iv60,
                 "iv90": iv90,
                 "slope": slope,
-                "raw_data": iv_by_dte
+                "total_oi": total_oi if total_oi > 0 else None,
+                "raw_data": {dte: iv for dte, iv in dte_points}
             }
+            
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             api_logger.log_error("GET", endpoint, e, duration_ms)
+            logger.error(f"获取 {symbol} IV 数据失败: {e}", exc_info=True)
             return None
     
     async def calculate_positioning_score(self, symbol: str, lookback_days: int = 5) -> Optional[Dict]:
-        """Calculate PositioningScore based on delta OI"""
+        """
+        Calculate PositioningScore based on delta OI
+        
+        改进：支持 ΔOI 计算（当前 OI - 昨日 OI）
+        """
         with LogContext(logger, "calculate_positioning_score", symbol=symbol, lookback=lookback_days):
             if not self.is_connected:
                 if not await self.connect():
@@ -417,12 +764,15 @@ class FutuService:
                 delta_oi_8_30_put = 0
                 delta_oi_31_90_call = 0
                 delta_oi_31_90_put = 0
+                total_oi = 0
                 
                 for opt in options:
                     expiry = datetime.strptime(opt["expiry_date"], "%Y-%m-%d").date()
                     dte = (expiry - today).days
-                    oi = opt.get("open_interest", 0)
+                    oi = opt.get("open_interest", 0) or 0
                     opt_type = opt.get("option_type", "")
+                    
+                    total_oi += oi
                     
                     if 0 <= dte <= 7:
                         if "CALL" in str(opt_type).upper():
@@ -440,6 +790,9 @@ class FutuService:
                         else:
                             delta_oi_31_90_put += oi
                 
+                # 计算 ΔOI
+                current_oi, delta_oi_1d = compute_delta_oi(symbol, total_oi)
+                
                 result = {
                     "symbol": symbol,
                     "delta_oi_0_7_call": delta_oi_0_7_call,
@@ -448,6 +801,8 @@ class FutuService:
                     "delta_oi_8_30_put": delta_oi_8_30_put,
                     "delta_oi_31_90_call": delta_oi_31_90_call,
                     "delta_oi_31_90_put": delta_oi_31_90_put,
+                    "total_oi": total_oi,
+                    "delta_oi_1d": delta_oi_1d,
                     "timestamp": datetime.now()
                 }
                 
@@ -472,10 +827,12 @@ class FutuService:
             
             return {
                 "symbol": symbol,
-                "iv30": iv_data["iv30"],
-                "iv60": iv_data["iv60"],
-                "iv90": iv_data["iv90"],
-                "slope": iv_data["slope"],
+                "iv7": iv_data.get("iv7"),
+                "iv30": iv_data.get("iv30"),
+                "iv60": iv_data.get("iv60"),
+                "iv90": iv_data.get("iv90"),
+                "slope": iv_data.get("slope"),
+                "total_oi": iv_data.get("total_oi"),
                 "delta_slope": 0,  # Would need historical data
                 "timestamp": datetime.now()
             }
@@ -504,11 +861,3 @@ def reset_futu_service():
     """Reset the Futu service instance"""
     global _futu_service
     _futu_service = None
-
-
-# Import pandas for IV calculations
-try:
-    import pandas as pd
-except ImportError:
-    pd = None
-    logger.warning("pandas not available, some IV calculations may fail")

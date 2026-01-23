@@ -379,10 +379,13 @@ class SymbolPool(Base):
     # 期权数据（Futu）
     positioning_score = Column(Float)
     term_score = Column(Float)
+    iv7 = Column(Float)   # 新增：7天IV
     iv30 = Column(Float)
     iv60 = Column(Float)
     iv90 = Column(Float)
     iv_slope = Column(Float)
+    total_oi = Column(Integer)  # 新增：总未平仓合约
+    delta_oi_1d = Column(Integer)  # 新增：1天OI变化
     
     # 综合完备度 (0-100)
     completeness = Column(Integer, default=0)
