@@ -366,8 +366,8 @@ rm -rf .venv
 ```yaml
 ibkr:
   host: "127.0.0.1"
-  port: 4001              # 4001=Gateway Live, 4002=Gateway Paper
-  client_id: 1
+  port: 4002              # 4001=Gateway Live, 4002=Gateway Paper
+  client_id: 3
   account_id: ""
   connection_timeout: 10
   enabled: true           # 是否启用
@@ -420,7 +420,7 @@ options_data:
 logging:
   level: "INFO"           # DEBUG, INFO, WARNING, ERROR
   file: "logs/app.log"
-  log_api_calls: true     # 是否记录 API 调用
+  log_api_calls: false     # 是否记录 API 调用
   log_response_data: false
   max_file_size: 10       # MB
   backup_count: 5

@@ -21,6 +21,10 @@ class IBKRConfig:
     client_id: int = 1
     account_id: str = ""
     connection_timeout: int = 10
+    qualify_timeout: int = 10        # 合约验证超时
+    request_timeout: int = 30        # 单个请求超时
+    historical_timeout: int = 60     # 历史数据请求超时
+    market_data_type: int = 3        # 1=Live, 3=Delayed
     enabled: bool = True
 
 
@@ -143,6 +147,10 @@ def _parse_ibkr_config(data: Dict[str, Any]) -> IBKRConfig:
         client_id=int(ibkr_data.get('client_id', 1)),
         account_id=str(ibkr_data.get('account_id', '')),
         connection_timeout=int(ibkr_data.get('connection_timeout', 10)),
+        qualify_timeout=int(ibkr_data.get('qualify_timeout', 10)),
+        request_timeout=int(ibkr_data.get('request_timeout', 30)),
+        historical_timeout=int(ibkr_data.get('historical_timeout', 60)),
+        market_data_type=int(ibkr_data.get('market_data_type', 3)),
         enabled=bool(ibkr_data.get('enabled', True))
     )
 

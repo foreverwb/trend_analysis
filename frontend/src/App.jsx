@@ -12,6 +12,7 @@ import DataConfigCenter from './components/DataConfigCenter';
 import SectorETFView from './components/SectorETFView';
 import IndustryETFView from './components/IndustryETFView';
 import MomentumStocksView from './components/MomentumStocksView';
+import DataLayerView from './components/DataLayerView';
 
 // 控制台日志开关
 const DEBUG_MODE = localStorage.getItem('debugMode') === 'true';
@@ -167,11 +168,11 @@ const App = () => {
           <span className="text-xs text-slate-600">总持仓数: {holdings.length}</span>
         </div>
         
-        <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
-          {/* 表头 - 修复序号列宽度 */}
-          <div className={`grid gap-4 px-4 py-3 bg-slate-100 border-b border-slate-200 font-medium text-xs text-slate-700`}
-               style={{ gridTemplateColumns: hasExtendedData ? '40px 70px 70px 70px 70px 50px 70px 60px' : '40px 70px 1fr' }}>
-            <div>#</div>
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+          {/* 表头 */}
+          <div className="grid px-4 py-3 bg-gradient-to-r from-slate-50 to-slate-100 border-b border-slate-200 font-semibold text-xs text-slate-600 uppercase tracking-wider"
+               style={{ gridTemplateColumns: hasExtendedData ? '48px 80px 80px 90px 90px 70px 80px 70px' : '48px 100px 1fr' }}>
+            <div className="text-center">#</div>
             <div>Ticker</div>
             <div className="text-right">Weight</div>
             {hasExtendedData && (
@@ -185,38 +186,38 @@ const App = () => {
             )}
           </div>
           
-          <div className="max-h-96 overflow-y-auto">
+          <div className="max-h-[420px] overflow-y-auto">
             {displayHoldings.map((holding, idx) => (
               <div 
                 key={idx} 
-                className={`grid gap-4 px-4 py-3 text-sm ${
-                  idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
-                } hover:bg-blue-50 transition-colors border-b border-slate-100`}
-                style={{ gridTemplateColumns: hasExtendedData ? '40px 70px 70px 70px 70px 50px 70px 60px' : '40px 70px 1fr' }}
+                className={`grid px-4 py-2.5 text-sm items-center ${
+                  idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'
+                } hover:bg-blue-50/70 transition-colors border-b border-slate-100/80`}
+                style={{ gridTemplateColumns: hasExtendedData ? '48px 80px 80px 90px 90px 70px 80px 70px' : '48px 100px 1fr' }}
               >
-                <div className="text-slate-500 font-medium">#{idx + 1}</div>
-                <div className="font-mono font-bold text-slate-900">{holding.ticker}</div>
-                <div className="text-right font-medium text-blue-600">
+                <div className="text-center text-slate-400 text-xs font-medium">#{idx + 1}</div>
+                <div className="font-mono font-bold text-slate-800 text-sm">{holding.ticker}</div>
+                <div className="text-right font-semibold text-blue-600">
                   {typeof holding.weight === 'number' ? holding.weight.toFixed(2) : holding.weight}%
                 </div>
                 {hasExtendedData && (
                   <>
                     <div className={`text-right font-medium ${
-                      holding.sma50 > 0 ? 'text-emerald-600' : holding.sma50 < 0 ? 'text-red-600' : 'text-slate-400'
+                      holding.sma50 > 0 ? 'text-emerald-600' : holding.sma50 < 0 ? 'text-red-500' : 'text-slate-400'
                     }`}>
                       {holding.sma50 !== null && holding.sma50 !== undefined 
                         ? `${holding.sma50 > 0 ? '+' : ''}${holding.sma50.toFixed(2)}%` 
                         : '-'}
                     </div>
                     <div className={`text-right font-medium ${
-                      holding.sma200 > 0 ? 'text-emerald-600' : holding.sma200 < 0 ? 'text-red-600' : 'text-slate-400'
+                      holding.sma200 > 0 ? 'text-emerald-600' : holding.sma200 < 0 ? 'text-red-500' : 'text-slate-400'
                     }`}>
                       {holding.sma200 !== null && holding.sma200 !== undefined 
                         ? `${holding.sma200 > 0 ? '+' : ''}${holding.sma200.toFixed(2)}%` 
                         : '-'}
                     </div>
                     <div className={`text-right font-medium ${
-                      holding.rsi > 70 ? 'text-red-600' : holding.rsi < 30 ? 'text-emerald-600' : 'text-slate-600'
+                      holding.rsi > 70 ? 'text-red-500' : holding.rsi < 30 ? 'text-emerald-600' : 'text-slate-600'
                     }`}>
                       {holding.rsi !== null && holding.rsi !== undefined 
                         ? holding.rsi.toFixed(1) 
@@ -224,15 +225,15 @@ const App = () => {
                     </div>
                     <div className={`text-right font-medium ${
                       holding.positioning_score > 60 ? 'text-emerald-600' : 
-                      holding.positioning_score < 40 ? 'text-red-600' : 'text-amber-600'
+                      holding.positioning_score < 40 ? 'text-red-500' : 'text-amber-500'
                     }`}>
                       {holding.positioning_score !== null && holding.positioning_score !== undefined 
                         ? holding.positioning_score.toFixed(0) 
                         : '-'}
                     </div>
                     <div className={`text-right font-medium ${
-                      holding.term_score > 0 ? 'text-red-600' : 
-                      holding.term_score < 0 ? 'text-emerald-600' : 'text-slate-600'
+                      holding.term_score > 0 ? 'text-red-500' : 
+                      holding.term_score < 0 ? 'text-emerald-600' : 'text-slate-500'
                     }`}>
                       {holding.term_score !== null && holding.term_score !== undefined 
                         ? holding.term_score.toFixed(1) 
@@ -245,10 +246,10 @@ const App = () => {
           </div>
           
           {holdings.length > maxDisplay && (
-            <div className="px-4 py-3 bg-slate-100 border-t border-slate-200">
+            <div className="px-4 py-2.5 bg-gradient-to-r from-slate-50 to-slate-100 border-t border-slate-200">
               <button
                 onClick={() => setExpandedHoldings(prev => ({ ...prev, [etfSymbol]: !prev[etfSymbol] }))}
-                className="w-full flex items-center justify-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                className="w-full flex items-center justify-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors py-1"
               >
                 {isExpanded ? (
                   <>
@@ -268,10 +269,10 @@ const App = () => {
         
         {/* 图例说明 */}
         {hasExtendedData && (
-          <div className="mt-3 text-xs text-slate-500 flex gap-4 flex-wrap">
+          <div className="mt-2 text-xs text-slate-500 flex gap-4 flex-wrap">
             <span>📊 50DMA/200DMA: 相对均线距离</span>
-            <span>🎯 Position: 定位评分 (Call/Put)</span>
-            <span>📈 Term: 期限结构 (IV30-HV20)</span>
+            <span>🎯 Position: 定位评分</span>
+            <span>📈 Term: 期限结构</span>
           </div>
         )}
       </div>
@@ -298,6 +299,7 @@ const App = () => {
             { id: 'sector-etf', label: '板块 ETF' },
             { id: 'industry-etf', label: '行业 ETF' },
             { id: 'momentum-stocks', label: '动能股池' },
+            { id: 'data-layer', label: '数据层级' },
             { id: 'data-config', label: '数据配置中心' }
           ].map(tab => (
             <button
@@ -374,6 +376,11 @@ const App = () => {
           getOptionsHeatColor={getOptionsHeatColor}
           getHeatLevelColor={getHeatLevelColor}
         />
+      )}
+
+      {/* 数据层级界面 */}
+      {activeTab === 'data-layer' && (
+        <DataLayerView />
       )}
 
       {/* 数据配置中心界面 */}

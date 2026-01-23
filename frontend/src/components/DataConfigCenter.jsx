@@ -6,6 +6,7 @@ import {
   Check, X
 } from 'lucide-react';
 import * as api from '../utils/api';
+import DataTriggerPanel from './DataTriggerPanel';
 
 const DataConfigCenter = () => {
   const [isUpdating, setIsUpdating] = useState(false);
@@ -17,6 +18,9 @@ const DataConfigCenter = () => {
   const [expandedSymbol, setExpandedSymbol] = useState(null);
   const [jsonData, setJsonData] = useState('');
   const [importStatus, setImportStatus] = useState(null);
+  
+  // 触发面板状态
+  const [showTriggerPanel, setShowTriggerPanel] = useState(null); // { etfSymbol, dataType }
 
   // API数据状态
   const [dataSources, setDataSources] = useState([]);
@@ -172,6 +176,14 @@ const DataConfigCenter = () => {
       setJsonData('');
       await api.syncSymbolPool();
       loadData();
+      
+      // 导入成功后显示触发面板，询问用户是否获取实时数据
+      if (res.data.record_count > 0) {
+        setShowTriggerPanel({
+          etfSymbol: targetETF,
+          dataType: importType === 'etf' ? 'etf' : 'holdings'
+        });
+      }
     } catch (error) {
       setImportStatus({
         success: false,
@@ -249,8 +261,28 @@ const DataConfigCenter = () => {
 
   const { sectorOptions, industryOptions } = getImportETFOptions();
 
+  // 关闭触发面板
+  const closeTriggerPanel = () => {
+    setShowTriggerPanel(null);
+    loadData(); // 刷新数据
+  };
+
   return (
     <div className="space-y-6">
+      {/* 触发面板模态框 */}
+      {showTriggerPanel && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="max-w-lg w-full">
+            <DataTriggerPanel
+              etfSymbol={showTriggerPanel.etfSymbol}
+              dataType={showTriggerPanel.dataType}
+              onClose={closeTriggerPanel}
+              onUpdateComplete={closeTriggerPanel}
+            />
+          </div>
+        </div>
+      )}
+      
       {/* 页面标题 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">

@@ -41,15 +41,21 @@ class IBKRService:
         self.log_api_calls = config.logging.log_api_calls
         self.log_response_data = config.logging.log_response_data
         
+        # 从配置加载超时设置
+        self.request_timeout = config.ibkr.request_timeout
+        self.qualify_timeout = config.ibkr.qualify_timeout
+        self.historical_timeout = config.ibkr.historical_timeout
+        self.market_data_type = config.ibkr.market_data_type
+        
         self.ib: Optional[IB] = None
         self._connected = False
         
-        logger.debug(f"IBKRService initialized: host={self.host}, port={self.port}, client_id={self.client_id}")
+        logger.debug(f"IBKRService 初始化: {self.host}:{self.port} (数据类型: {self.market_data_type})")
     
     async def connect(self) -> bool:
         """Connect to IB Gateway"""
         if not self.enabled:
-            logger.warning("IBKR is disabled in configuration")
+            logger.debug("IBKR 服务已禁用")
             return False
         
         start_time = time.time()
@@ -65,8 +71,6 @@ class IBKRService:
                 self.ib = IB()
             
             if not self.ib.isConnected():
-                logger.debug(f"Attempting to connect to IB Gateway at {self.host}:{self.port}")
-                
                 await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(
                         None, 
@@ -79,32 +83,25 @@ class IBKRService:
             duration_ms = (time.time() - start_time) * 1000
             
             if self._connected:
-                # 设置使用延迟数据（免费）
-                # Market Data Type: 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
-                self.ib.reqMarketDataType(3)
-                logger.info("Set market data type to DELAYED (free)")
-                
-                api_logger.log_connection("ESTABLISHED", True, 
-                    f"Connected to IB Gateway at {self.host}:{self.port}, accounts: {self.ib.managedAccounts()}")
-                if self.log_api_calls:
-                    api_logger.log_response("CONNECT", f"{self.host}:{self.port}", 
-                        "success", duration_ms)
+                self.ib.reqMarketDataType(self.market_data_type)
+                logger.info(f"IBKR 连接成功 ({duration_ms:.0f}ms)")
+                api_logger.log_connection("ESTABLISHED", True, f"Connected to {self.host}:{self.port}")
             else:
+                logger.error("IBKR 连接失败")
                 api_logger.log_connection("FAILED", False, "Connection returned but not connected")
-                if self.log_api_calls:
-                    api_logger.log_response("CONNECT", f"{self.host}:{self.port}", 
-                        "failed", duration_ms)
             
             return self._connected
             
         except asyncio.TimeoutError:
             duration_ms = (time.time() - start_time) * 1000
+            logger.error(f"IBKR 连接超时 ({self.connection_timeout}s)")
             api_logger.log_error("CONNECT", f"{self.host}:{self.port}", 
                 TimeoutError(f"Connection timeout after {self.connection_timeout}s"), duration_ms)
             self._connected = False
             return False
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
+            logger.error(f"IBKR 连接异常: {e}")
             api_logger.log_error("CONNECT", f"{self.host}:{self.port}", e, duration_ms)
             self._connected = False
             return False
@@ -125,51 +122,60 @@ class IBKRService:
             api_logger.log_request("GET", endpoint, {"sec_type": sec_type})
         
         if not self.is_connected:
-            logger.debug(f"Not connected, attempting to connect for {symbol}")
             await self.connect()
         
         if not self.is_connected:
-            duration_ms = (time.time() - start_time) * 1000
-            api_logger.log_error("GET", endpoint, 
-                ConnectionError("Failed to connect to IBKR"), duration_ms)
+            logger.debug(f"{symbol} - 连接失败")
             return None
         
         try:
             with LogContext(logger, "get_market_data", symbol=symbol, sec_type=sec_type):
+                # 创建合约
                 if sec_type == "IND":
                     contract = Index(symbol, "CBOE" if symbol == "VIX" else "NYSE")
                 else:
                     contract = Stock(symbol, "SMART", "USD")
                 
-                logger.debug(f"Qualifying contract for {symbol}")
-                # 使用线程执行器安全地调用同步方法
+                # 验证合约（带超时）
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self.ib.qualifyContracts, contract)
+                try:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, self.ib.qualifyContracts, contract),
+                        timeout=self.qualify_timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.debug(f"{symbol} - 合约验证超时")
+                    return None
                 
-                logger.debug(f"Requesting market data for {symbol}")
+                # 请求市场数据
                 ticker = self.ib.reqMktData(contract, "", False, False)
                 await asyncio.sleep(2)  # Wait for data
                 
-                # 优先使用延迟数据字段，然后是实时数据字段
-                # 延迟数据字段: delayedLast, delayedClose, delayedBid, delayedAsk 等
+                # 解析价格数据
                 price = None
+                price_source = "none"
                 
                 # 尝试延迟数据
                 if hasattr(ticker, 'delayedLast') and ticker.delayedLast is not None and ticker.delayedLast > 0:
                     price = ticker.delayedLast
+                    price_source = "delayedLast"
                 elif hasattr(ticker, 'delayedClose') and ticker.delayedClose is not None and ticker.delayedClose > 0:
                     price = ticker.delayedClose
+                    price_source = "delayedClose"
                 # 尝试实时数据作为备用
                 elif ticker.last is not None and ticker.last > 0:
                     price = ticker.last
+                    price_source = "last"
                 elif ticker.close is not None and ticker.close > 0:
                     price = ticker.close
+                    price_source = "close"
                 # 最后尝试 bid/ask 中点
                 else:
                     bid = getattr(ticker, 'delayedBid', None) or ticker.bid
                     ask = getattr(ticker, 'delayedAsk', None) or ticker.ask
                     if bid and ask and bid > 0 and ask > 0:
                         price = (bid + ask) / 2
+                        price_source = "bid_ask_mid"
                 
                 data = {
                     "symbol": symbol,
@@ -184,14 +190,15 @@ class IBKRService:
                     "timestamp": datetime.now()
                 }
                 
+                # 取消订阅
                 self.ib.cancelMktData(contract)
                 
                 duration_ms = (time.time() - start_time) * 1000
+                
                 if self.log_api_calls:
                     api_logger.log_response("GET", endpoint, "success", duration_ms, 
                         data={"price": data["price"]}, log_data=self.log_response_data)
                 
-                logger.debug(f"Market data retrieved for {symbol}: price={data['price']}")
                 return data
                 
         except Exception as e:
@@ -221,25 +228,29 @@ class IBKRService:
             await self.connect()
         
         if not self.is_connected:
-            duration_ms = (time.time() - start_time) * 1000
-            api_logger.log_error("GET", endpoint, 
-                ConnectionError("Failed to connect to IBKR"), duration_ms)
+            logger.debug(f"{symbol} - 历史数据连接失败")
             return None
         
         try:
             with LogContext(logger, "get_historical_data", symbol=symbol, duration=duration):
+                # 创建合约
                 if sec_type == "IND":
                     contract = Index(symbol, "CBOE" if symbol == "VIX" else "NYSE")
                 else:
                     contract = Stock(symbol, "SMART", "USD")
                 
-                # 使用线程执行器安全地调用同步方法
+                # 验证合约（带超时）
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self.ib.qualifyContracts, contract)
+                try:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, self.ib.qualifyContracts, contract),
+                        timeout=self.qualify_timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.debug(f"{symbol} - 历史数据合约验证超时")
+                    return None
                 
-                logger.debug(f"Requesting historical data for {symbol}: {duration}, {bar_size}")
-                
-                # 包装同步方法调用
+                # 请求历史数据（带超时）
                 def fetch_historical():
                     return self.ib.reqHistoricalData(
                         contract,
@@ -251,13 +262,16 @@ class IBKRService:
                         formatDate=1
                     )
                 
-                bars = await loop.run_in_executor(None, fetch_historical)
+                try:
+                    bars = await asyncio.wait_for(
+                        loop.run_in_executor(None, fetch_historical),
+                        timeout=self.historical_timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.debug(f"{symbol} - 历史数据请求超时")
+                    return None
                 
                 if not bars:
-                    duration_ms = (time.time() - start_time) * 1000
-                    logger.warning(f"No historical data returned for {symbol}")
-                    if self.log_api_calls:
-                        api_logger.log_response("GET", endpoint, "empty", duration_ms)
                     return None
                 
                 result = []
@@ -278,12 +292,12 @@ class IBKRService:
                     api_logger.log_response("GET", endpoint, "success", duration_ms,
                         data={"bars_count": len(result)}, log_data=self.log_response_data)
                 
-                logger.debug(f"Historical data retrieved for {symbol}: {len(result)} bars")
                 return result
                 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             api_logger.log_error("GET", endpoint, e, duration_ms)
+            return None
             return None
     
     async def get_spy_data(self) -> Optional[Dict]:
@@ -912,14 +926,11 @@ class IBKRService:
         计算 PositioningScore（基于 OI 数据）
         Calculate PositioningScore based on Open Interest data
         """
-        start_time = time.time()
-        
         with LogContext(logger, "calculate_positioning_score", symbol=symbol, lookback=lookback_days):
             # 获取期权链数据
             options = await self.get_option_chain(symbol)
             
             if not options:
-                logger.warning(f"No option data available for positioning score: {symbol}")
                 return None
             
             today = datetime.now().date()
@@ -964,11 +975,10 @@ class IBKRService:
                         else:
                             delta_oi_31_90_put += oi
                             
-                except Exception as e:
-                    logger.debug(f"Error processing option: {e}")
+                except Exception:
                     continue
             
-            result = {
+            return {
                 'symbol': symbol,
                 'delta_oi_0_7_call': delta_oi_0_7_call,
                 'delta_oi_0_7_put': delta_oi_0_7_put,
@@ -978,12 +988,6 @@ class IBKRService:
                 'delta_oi_31_90_put': delta_oi_31_90_put,
                 'timestamp': datetime.now()
             }
-            
-            duration_ms = (time.time() - start_time) * 1000
-            logger.info(f"Positioning score calculated for {symbol} in {duration_ms:.0f}ms | "
-                       f"OI_0-7: Call={delta_oi_0_7_call}, Put={delta_oi_0_7_put}")
-            
-            return result
     
     async def calculate_term_score(self, symbol: str) -> Optional[Dict]:
         """
@@ -994,10 +998,9 @@ class IBKRService:
             iv_data = await self.get_option_iv_data(symbol)
             
             if not iv_data:
-                logger.warning(f"No IV data available for term score: {symbol}")
                 return None
             
-            result = {
+            return {
                 'symbol': symbol,
                 'iv30': iv_data['iv30'],
                 'iv60': iv_data['iv60'],
@@ -1006,9 +1009,6 @@ class IBKRService:
                 'delta_slope': 0,  # 需要历史数据
                 'timestamp': datetime.now()
             }
-            
-            logger.info(f"Term score calculated for {symbol} | Slope: {iv_data['slope']:.2f}%")
-            return result
 
 
 # Singleton instance
@@ -1020,5 +1020,4 @@ def get_ibkr_service(host: str = None, port: int = None, client_id: int = None) 
     global _ibkr_service
     if _ibkr_service is None:
         _ibkr_service = IBKRService(host, port, client_id)
-        logger.info("IBKRService instance created")
     return _ibkr_service

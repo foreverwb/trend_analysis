@@ -181,10 +181,18 @@ def setup_logging(
         root_logger.addHandler(file_handler)
     
     # Set specific logger levels
-    logging.getLogger('uvicorn').setLevel(logging.INFO)
+    logging.getLogger('uvicorn').setLevel(logging.WARNING)
+    logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
     logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
     logging.getLogger('httpx').setLevel(logging.WARNING)
     logging.getLogger('httpcore').setLevel(logging.WARNING)
+    # 抑制 ib_insync 详细日志
+    logging.getLogger('ib_insync').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.ib').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.client').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.wrapper').setLevel(logging.WARNING)
+    # 抑制 futu SDK 日志
+    logging.getLogger('futu').setLevel(logging.WARNING)
     
     return root_logger
 
@@ -282,7 +290,7 @@ def asyncio_iscoroutinefunction(func):
 
 
 class LogContext:
-    """Context manager for logging with additional context"""
+    """Context manager for logging with additional context (simplified - no START/END logs)"""
     
     def __init__(self, logger: logging.Logger, operation: str, **context):
         self.logger = logger
@@ -292,19 +300,16 @@ class LogContext:
     
     def __enter__(self):
         self.start_time = time.time()
-        context_str = " | ".join(f"{k}={v}" for k, v in self.context.items())
-        self.logger.info(f"▶ START: {self.operation} | {context_str}")
+        # 不输出 START 日志
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        duration = (time.time() - self.start_time) * 1000
-        context_str = " | ".join(f"{k}={v}" for k, v in self.context.items())
-        
-        if exc_type is None:
-            self.logger.info(f"■ END: {self.operation} | {context_str} | Time: {duration:.2f}ms")
-        else:
+        # 只在出错时输出日志
+        if exc_type is not None:
+            duration = (time.time() - self.start_time) * 1000
+            context_str = " | ".join(f"{k}={v}" for k, v in self.context.items())
             self.logger.error(
-                f"✗ FAILED: {self.operation} | {context_str} | "
+                f"✗ {self.operation} | {context_str} | "
                 f"Time: {duration:.2f}ms | Error: {exc_type.__name__}: {exc_val}"
             )
         

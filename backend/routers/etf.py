@@ -9,7 +9,7 @@ from datetime import datetime, date
 import logging
 
 from ..database import get_db
-from ..models import SectorETF, IndustryETF, ETFHolding, FinvizData, MarketChameleonData
+from ..models import SectorETF, IndustryETF, ETFHolding, FinvizData, MarketChameleonData, SymbolPool
 from ..schemas import (
     SectorETFResponse, IndustryETFResponse, 
     HoldingResponse, HoldingsUpload,
@@ -40,65 +40,118 @@ SECTOR_ETF_NAMES = {
 def convert_sector_etf_to_response(etf: SectorETF, db: Session) -> SectorETFResponse:
     """Convert SectorETF model to response schema
     
-    修复 Bug #3: 持仓明细中增加 50DMA, 200DMA, PositioningScore, TermScore
+    数据优先级：
+    1. SymbolPool（IBKR/Futu 实时数据）- 跨 ETF 共享
+    2. Finviz/MarketChameleon（手动导入数据）- 优先当前 ETF，然后跨 ETF 查询
+    
+    修复：确保即使数据是通过其他 ETF 更新的，也能正确显示
     """
-    # Get holdings
-    holdings = db.query(ETFHolding).filter(
+    from sqlalchemy import func
+    
+    # Get holdings - 使用子查询获取每个 ticker 的最新记录
+    # 避免重复记录
+    subquery = db.query(
+        ETFHolding.ticker,
+        func.max(ETFHolding.id).label('max_id')
+    ).filter(
         ETFHolding.sector_etf_symbol == etf.symbol
+    ).group_by(ETFHolding.ticker).subquery()
+    
+    holdings = db.query(ETFHolding).join(
+        subquery,
+        (ETFHolding.ticker == subquery.c.ticker) & 
+        (ETFHolding.id == subquery.c.max_id)
     ).order_by(ETFHolding.weight.desc()).all()
     
-    # 获取该 ETF 对应的 Finviz 数据
+    # 获取 SymbolPool 实时数据（跨 ETF 共享）
+    tickers = [h.ticker for h in holdings]
+    pool_records = db.query(SymbolPool).filter(SymbolPool.ticker.in_(tickers)).all()
+    pool_map = {r.ticker: r for r in pool_records}
+    
+    # 获取 Finviz 数据 - 先查当前 ETF，再查所有 ETF
     finviz_data_map = {}
+    
+    # 先查当前 ETF 的数据
     finviz_records = db.query(FinvizData).filter(
-        FinvizData.etf_symbol == etf.symbol
+        FinvizData.etf_symbol == etf.symbol,
+        FinvizData.ticker.in_(tickers)
     ).order_by(FinvizData.data_date.desc()).all()
     
     for record in finviz_records:
         if record.ticker not in finviz_data_map:
             finviz_data_map[record.ticker] = record
     
-    # 获取该 ETF 对应的 MarketChameleon 数据
+    # 对于没有找到的 ticker，跨 ETF 查询
+    missing_tickers = [t for t in tickers if t not in finviz_data_map]
+    if missing_tickers:
+        cross_etf_finviz = db.query(FinvizData).filter(
+            FinvizData.ticker.in_(missing_tickers)
+        ).order_by(FinvizData.data_date.desc()).all()
+        
+        for record in cross_etf_finviz:
+            if record.ticker not in finviz_data_map:
+                finviz_data_map[record.ticker] = record
+    
+    # 获取 MarketChameleon 数据 - 同样策略
     mc_data_map = {}
+    
     mc_records = db.query(MarketChameleonData).filter(
-        MarketChameleonData.etf_symbol == etf.symbol
+        MarketChameleonData.etf_symbol == etf.symbol,
+        MarketChameleonData.symbol.in_(tickers)
     ).order_by(MarketChameleonData.data_date.desc()).all()
     
     for record in mc_records:
         if record.symbol not in mc_data_map:
             mc_data_map[record.symbol] = record
     
+    # 跨 ETF 查询 MarketChameleon 数据
+    missing_mc_tickers = [t for t in tickers if t not in mc_data_map]
+    if missing_mc_tickers:
+        cross_etf_mc = db.query(MarketChameleonData).filter(
+            MarketChameleonData.symbol.in_(missing_mc_tickers)
+        ).order_by(MarketChameleonData.data_date.desc()).all()
+        
+        for record in cross_etf_mc:
+            if record.symbol not in mc_data_map:
+                mc_data_map[record.symbol] = record
+    
     holdings_response = []
     for h in holdings:
+        pool = pool_map.get(h.ticker)
         finviz = finviz_data_map.get(h.ticker)
         mc = mc_data_map.get(h.ticker)
         
-        # 计算 PositioningScore（基于 Put/Call 比率和 OI 变化）
-        positioning_score = None
-        delta_oi_8_30 = None
-        delta_oi_31_90 = None
-        term_score = None
+        # 优先使用 SymbolPool 数据，其次是 Finviz/MC
+        sma50 = pool.sma50 if pool and pool.sma50 else (finviz.sma50 if finviz else None)
+        sma200 = pool.sma200 if pool and pool.sma200 else (finviz.sma200 if finviz else None)
+        price = pool.price if pool and pool.price else (finviz.price if finviz else None)
+        rsi = pool.rsi if pool and pool.rsi else (finviz.rsi if finviz else None)
         
-        if mc:
-            # 简化的 Positioning Score 计算
+        # 期权数据优先从 SymbolPool 获取
+        positioning_score = pool.positioning_score if pool and pool.positioning_score else None
+        term_score = pool.term_score if pool and pool.term_score else None
+        
+        # 如果 SymbolPool 没有期权数据，从 MC 计算
+        if positioning_score is None and mc:
             put_pct = mc.put_pct or 0
             if put_pct > 0:
-                positioning_score = 50 - (put_pct - 50)  # 50% Put 为中性
-            
-            # TermScore 基于 IV 变化
+                positioning_score = 50 - (put_pct - 50)
+        
+        if term_score is None and mc:
             if mc.iv30 and mc.hv20:
-                term_score = mc.iv30 - mc.hv20  # IV30 - HV20 差值
+                term_score = mc.iv30 - mc.hv20
         
         holding_resp = HoldingResponse(
             id=h.id, 
             ticker=h.ticker, 
             weight=h.weight,
-            sma50=finviz.sma50 if finviz else None,
-            sma200=finviz.sma200 if finviz else None,
-            price=finviz.price if finviz else None,
-            rsi=finviz.rsi if finviz else None,
+            sma50=sma50,
+            sma200=sma200,
+            price=price,
+            rsi=rsi,
             positioning_score=positioning_score,
-            delta_oi_8_30=delta_oi_8_30,
-            delta_oi_31_90=delta_oi_31_90,
+            delta_oi_8_30=None,
+            delta_oi_31_90=None,
             term_score=term_score
         )
         holdings_response.append(holding_resp)
@@ -142,48 +195,102 @@ def convert_sector_etf_to_response(etf: SectorETF, db: Session) -> SectorETFResp
 def convert_industry_etf_to_response(etf: IndustryETF, db: Session) -> IndustryETFResponse:
     """Convert IndustryETF model to response schema
     
-    修复 Bug #3: 持仓明细中增加 50DMA, 200DMA, PositioningScore, TermScore
+    数据优先级：
+    1. SymbolPool（IBKR/Futu 实时数据）- 跨 ETF 共享
+    2. Finviz/MarketChameleon（手动导入数据）- 优先当前 ETF，然后跨 ETF 查询
+    
+    修复：确保即使数据是通过其他 ETF 更新的，也能正确显示
     """
-    holdings = db.query(ETFHolding).filter(
+    from sqlalchemy import func
+    
+    # Get holdings - 使用子查询获取每个 ticker 的最新记录
+    subquery = db.query(
+        ETFHolding.ticker,
+        func.max(ETFHolding.id).label('max_id')
+    ).filter(
         ETFHolding.industry_etf_symbol == etf.symbol
+    ).group_by(ETFHolding.ticker).subquery()
+    
+    holdings = db.query(ETFHolding).join(
+        subquery,
+        (ETFHolding.ticker == subquery.c.ticker) & 
+        (ETFHolding.id == subquery.c.max_id)
     ).order_by(ETFHolding.weight.desc()).all()
     
-    # 获取该 ETF 对应的 Finviz 数据
+    # 获取 SymbolPool 实时数据（跨 ETF 共享）
+    tickers = [h.ticker for h in holdings]
+    pool_records = db.query(SymbolPool).filter(SymbolPool.ticker.in_(tickers)).all()
+    pool_map = {r.ticker: r for r in pool_records}
+    
+    # 获取 Finviz 数据 - 先查当前 ETF，再查所有 ETF
     finviz_data_map = {}
+    
     finviz_records = db.query(FinvizData).filter(
-        FinvizData.etf_symbol == etf.symbol
+        FinvizData.etf_symbol == etf.symbol,
+        FinvizData.ticker.in_(tickers)
     ).order_by(FinvizData.data_date.desc()).all()
     
     for record in finviz_records:
         if record.ticker not in finviz_data_map:
             finviz_data_map[record.ticker] = record
     
-    # 获取该 ETF 对应的 MarketChameleon 数据
+    # 跨 ETF 查询
+    missing_tickers = [t for t in tickers if t not in finviz_data_map]
+    if missing_tickers:
+        cross_etf_finviz = db.query(FinvizData).filter(
+            FinvizData.ticker.in_(missing_tickers)
+        ).order_by(FinvizData.data_date.desc()).all()
+        
+        for record in cross_etf_finviz:
+            if record.ticker not in finviz_data_map:
+                finviz_data_map[record.ticker] = record
+    
+    # 获取 MarketChameleon 数据
     mc_data_map = {}
+    
     mc_records = db.query(MarketChameleonData).filter(
-        MarketChameleonData.etf_symbol == etf.symbol
+        MarketChameleonData.etf_symbol == etf.symbol,
+        MarketChameleonData.symbol.in_(tickers)
     ).order_by(MarketChameleonData.data_date.desc()).all()
     
     for record in mc_records:
         if record.symbol not in mc_data_map:
             mc_data_map[record.symbol] = record
     
+    # 跨 ETF 查询
+    missing_mc_tickers = [t for t in tickers if t not in mc_data_map]
+    if missing_mc_tickers:
+        cross_etf_mc = db.query(MarketChameleonData).filter(
+            MarketChameleonData.symbol.in_(missing_mc_tickers)
+        ).order_by(MarketChameleonData.data_date.desc()).all()
+        
+        for record in cross_etf_mc:
+            if record.symbol not in mc_data_map:
+                mc_data_map[record.symbol] = record
+    
     holdings_response = []
     for h in holdings:
+        pool = pool_map.get(h.ticker)
         finviz = finviz_data_map.get(h.ticker)
         mc = mc_data_map.get(h.ticker)
         
-        # 计算 PositioningScore 和 TermScore
-        positioning_score = None
-        delta_oi_8_30 = None
-        delta_oi_31_90 = None
-        term_score = None
+        # 优先使用 SymbolPool 数据，其次是 Finviz/MC
+        sma50 = pool.sma50 if pool and pool.sma50 else (finviz.sma50 if finviz else None)
+        sma200 = pool.sma200 if pool and pool.sma200 else (finviz.sma200 if finviz else None)
+        price = pool.price if pool and pool.price else (finviz.price if finviz else None)
+        rsi = pool.rsi if pool and pool.rsi else (finviz.rsi if finviz else None)
         
-        if mc:
+        # 期权数据优先从 SymbolPool 获取
+        positioning_score = pool.positioning_score if pool and pool.positioning_score else None
+        term_score = pool.term_score if pool and pool.term_score else None
+        
+        # 如果 SymbolPool 没有期权数据，从 MC 计算
+        if positioning_score is None and mc:
             put_pct = mc.put_pct or 0
             if put_pct > 0:
                 positioning_score = 50 - (put_pct - 50)
-            
+        
+        if term_score is None and mc:
             if mc.iv30 and mc.hv20:
                 term_score = mc.iv30 - mc.hv20
         
@@ -191,13 +298,13 @@ def convert_industry_etf_to_response(etf: IndustryETF, db: Session) -> IndustryE
             id=h.id, 
             ticker=h.ticker, 
             weight=h.weight,
-            sma50=finviz.sma50 if finviz else None,
-            sma200=finviz.sma200 if finviz else None,
-            price=finviz.price if finviz else None,
-            rsi=finviz.rsi if finviz else None,
+            sma50=sma50,
+            sma200=sma200,
+            price=price,
+            rsi=rsi,
             positioning_score=positioning_score,
-            delta_oi_8_30=delta_oi_8_30,
-            delta_oi_31_90=delta_oi_31_90,
+            delta_oi_8_30=None,
+            delta_oi_31_90=None,
             term_score=term_score
         )
         holdings_response.append(holding_resp)

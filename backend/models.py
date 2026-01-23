@@ -370,6 +370,20 @@ class SymbolPool(Base):
     futu_status = Column(String(20), default='pending')
     futu_last_update = Column(DateTime)
     
+    # === 实时数据字段（从 IBKR/Futu 获取）===
+    # 价格和技术指标（IBKR）
+    sma50 = Column(Float)
+    sma200 = Column(Float)
+    rsi = Column(Float)
+    
+    # 期权数据（Futu）
+    positioning_score = Column(Float)
+    term_score = Column(Float)
+    iv30 = Column(Float)
+    iv60 = Column(Float)
+    iv90 = Column(Float)
+    iv_slope = Column(Float)
+    
     # 综合完备度 (0-100)
     completeness = Column(Integer, default=0)
     

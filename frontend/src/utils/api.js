@@ -228,6 +228,41 @@ export const cancelUpdate = () => api.post('/data-config/update/cancel');
 // 执行计算
 export const executeCompute = (request) => api.post('/data-config/compute', request);
 
+// ==================== Data Trigger (数据触发) ====================
+// 获取数据层级概览
+export const getDataOverview = () => api.get('/data-trigger/overview');
+
+// Top N 权重分析
+export const analyzeTopN = (etfSymbol, holdingsCount = 40) => 
+  api.post('/data-trigger/analyze-top-n', { etf_symbol: etfSymbol, holdings_count: holdingsCount });
+
+// 获取待更新标的
+export const getPendingSymbols = (etfSymbol, topN = 20) => 
+  api.get(`/data-trigger/pending-symbols/${etfSymbol}`, { params: { top_n: topN } });
+
+// 启动批量更新
+export const startBatchUpdate = (symbols, sources = ['ibkr', 'futu'], etfSymbol = null) => 
+  api.post('/data-trigger/batch-update', { symbols, sources, etf_symbol: etfSymbol });
+
+// 获取批量更新状态
+export const getBatchUpdateStatus = (sessionId) => 
+  api.get(`/data-trigger/batch-update/${sessionId}`);
+
+// 取消批量更新
+export const cancelBatchUpdate = (sessionId) => 
+  api.post(`/data-trigger/batch-update/${sessionId}/cancel`);
+
+// 快捷更新
+export const quickUpdate = (etfSymbol, topN = 20, sources = ['ibkr', 'futu']) => 
+  api.post(`/data-trigger/quick-update/${etfSymbol}`, { top_n: topN, sources });
+
+// 获取ETF持仓明细
+export const getETFHoldingsDetail = (etfSymbol, topN = 20) => 
+  api.get(`/data-trigger/etf-holdings/${etfSymbol}`, { params: { top_n: topN } });
+
+// 获取速率控制统计
+export const getRateStats = () => api.get('/data-trigger/rate-stats');
+
 // ==================== Debug Utilities ====================
 /**
  * Enable debug mode (verbose logging)

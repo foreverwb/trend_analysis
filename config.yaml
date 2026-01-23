@@ -15,8 +15,16 @@ ibkr:
   account_id: ""
   # 连接超时时间 (秒)
   connection_timeout: 10
+  # 合约验证超时 (秒)
+  qualify_timeout: 10
+  # 单个请求超时 (秒)
+  request_timeout: 30
+  # 历史数据请求超时 (秒)
+  historical_timeout: 60
   # 是否启用
   enabled: true
+  # 市场数据类型: 1=Live(实时,需付费), 3=Delayed(延迟15分钟,免费)
+  market_data_type: 3
 
 # Futu OpenD API 配置
 futu:
@@ -67,8 +75,8 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
   # 日志文件路径 (留空则只输出到控制台)
   file: "logs/app.log"
-  # 是否记录 API 调用详情
-  log_api_calls: true
+  # 是否记录 API 调用详情 (设为 false 减少日志噪音)
+  log_api_calls: false
   # 是否记录响应数据 (注意: 可能包含敏感信息)
   log_response_data: false
   # 日志文件最大大小 (MB)

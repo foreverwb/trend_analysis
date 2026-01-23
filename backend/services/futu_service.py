@@ -38,15 +38,12 @@ class FutuService:
         self._last_reset = datetime.now()
         self._max_requests_per_minute = config.futu.max_requests_per_minute
         
-        logger.info(
-            f"FutuService initialized | Host: {self.host}:{self.port} | "
-            f"Enabled: {self.enabled} | RateLimit: {self._max_requests_per_minute}/min"
-        )
+        logger.debug(f"FutuService 初始化: {self.host}:{self.port}")
     
     async def connect(self) -> bool:
         """Connect to Futu OpenD"""
         if not self.enabled:
-            logger.warning("Futu service is disabled in configuration")
+            logger.debug("Futu 服务已禁用")
             return False
         
         start_time = time.time()
@@ -54,7 +51,6 @@ class FutuService:
         
         try:
             if self._context is None:
-                logger.debug(f"Creating OpenQuoteContext for {self.host}:{self.port}")
                 self._context = OpenQuoteContext(host=self.host, port=self.port)
             
             # Test connection with a simple request
@@ -63,16 +59,12 @@ class FutuService:
             
             if ret == RET_OK:
                 self._connected = True
-                api_logger.log_connection("ESTABLISHED", True, 
-                    f"Connected to Futu OpenD at {self.host}:{self.port}")
-                api_logger.log_response("CONNECT", f"{self.host}:{self.port}", 
-                                       "success", duration_ms)
+                logger.info(f"Futu 连接成功 ({duration_ms:.0f}ms)")
+                api_logger.log_connection("ESTABLISHED", True, f"Connected to {self.host}:{self.port}")
                 return True
             else:
                 self._connected = False
                 api_logger.log_connection("FAILED", False, f"Futu connection failed: {data}")
-                api_logger.log_response("CONNECT", f"{self.host}:{self.port}", 
-                                       "failed", duration_ms)
                 return False
                 
         except Exception as e:
@@ -106,14 +98,12 @@ class FutuService:
         if self._request_count >= self._max_requests_per_minute:
             wait_time = 60 - (now - self._last_reset).total_seconds()
             if wait_time > 0:
-                logger.warning(f"Rate limit reached ({self._request_count}/{self._max_requests_per_minute}), "
-                              f"waiting {wait_time:.1f}s")
+                logger.debug(f"Futu 速率限制，等待 {wait_time:.1f}s")
                 await asyncio.sleep(wait_time)
                 self._request_count = 0
                 self._last_reset = datetime.now()
         
         self._request_count += 1
-        logger.debug(f"Rate limit check passed: {self._request_count}/{self._max_requests_per_minute}")
     
     async def get_option_chain(self, symbol: str) -> Optional[List[Dict]]:
         """Get option chain for a symbol"""
@@ -130,31 +120,23 @@ class FutuService:
         await self._rate_limit_check()
         
         try:
-            # Get US stock code format
             us_symbol = f"US.{symbol}"
-            logger.debug(f"Getting option expiration dates for {us_symbol}")
             
             # Get option expiry dates
             ret, data = self._context.get_option_expiration_date(code=us_symbol)
             if ret != RET_OK:
-                api_logger.log_error("GET", endpoint, 
-                    Exception(f"Failed to get option expiration dates: {data}"))
                 return None
             
             expiry_dates = data['strike_time'].tolist() if 'strike_time' in data.columns else []
             
             if not expiry_dates:
-                logger.warning(f"No expiry dates found for {symbol}")
                 return None
-            
-            logger.debug(f"Found {len(expiry_dates)} expiry dates for {symbol}")
             
             # Get option chain for nearest expirations
             all_options = []
             for expiry in expiry_dates[:4]:  # Get first 4 expirations
                 await self._rate_limit_check()
                 
-                logger.debug(f"Getting option chain for {symbol} expiry {expiry}")
                 ret, data = self._context.get_option_chain(
                     code=us_symbol,
                     start=expiry,
@@ -179,13 +161,11 @@ class FutuService:
                                    {"options_count": len(all_options)} if self.log_response_data else None,
                                    self.log_response_data)
             
-            logger.info(f"Retrieved {len(all_options)} options for {symbol}")
             return all_options
             
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             api_logger.log_error("GET", endpoint, e, duration_ms)
-            logger.error(f"Error getting option chain for {symbol}: {e}", exc_info=True)
             return None
     
     async def get_market_snapshot(self, symbols: List[str]) -> Optional[List[Dict]]:
@@ -241,8 +221,17 @@ class FutuService:
             logger.error(f"Error getting market snapshot: {e}", exc_info=True)
             return None
     
-    async def get_option_iv_data(self, symbol: str) -> Optional[Dict]:
-        """Get implied volatility data for term structure calculation"""
+    async def get_option_iv_data(self, symbol: str, underlying_price: float = None) -> Optional[Dict]:
+        """
+        Get implied volatility data for term structure calculation
+        
+        注意: Futu get_option_chain 只返回静态数据，不含 IV
+        需要先获取期权代码，然后通过 get_market_snapshot 获取包含 IV 的动态数据
+        
+        Args:
+            symbol: 股票代码
+            underlying_price: 标的价格（从IBKR获取，避免调用Futu行情接口）
+        """
         start_time = time.time()
         endpoint = f"option_iv/{symbol}"
         
@@ -259,18 +248,31 @@ class FutuService:
             us_symbol = f"US.{symbol}"
             
             # Get option expiry dates
-            logger.debug(f"Getting option expiration dates for IV data: {us_symbol}")
             ret, data = self._context.get_option_expiration_date(code=us_symbol)
             if ret != RET_OK:
-                api_logger.log_error("GET", endpoint, 
-                    Exception(f"Failed to get option expiration dates: {data}"))
+                logger.warning(f"无法获取 {symbol} 的期权到期日: {data}")
                 return None
             
             expiry_dates = data['strike_time'].tolist() if 'strike_time' in data.columns else []
             
             if len(expiry_dates) < 3:
-                logger.warning(f"Insufficient expiry dates for IV data: {symbol} (only {len(expiry_dates)})")
+                logger.warning(f"{symbol} 期权到期日不足3个: {len(expiry_dates)}")
                 return None
+            
+            # 如果没有提供价格，尝试从期权链数据推断 ATM strike
+            if underlying_price is None:
+                ret, first_chain = self._context.get_option_chain(
+                    code=us_symbol,
+                    start=expiry_dates[0],
+                    end=expiry_dates[0],
+                    option_cond_type=OptionCondType.ALL
+                )
+                if ret == RET_OK and len(first_chain) > 0:
+                    strikes = sorted(first_chain["strike_price"].unique())
+                    underlying_price = strikes[len(strikes) // 2]
+                else:
+                    logger.warning(f"无法推断 {symbol} 的标的价格")
+                    return None
             
             # Calculate days to expiry and collect IV
             today = datetime.now().date()
@@ -282,7 +284,10 @@ class FutuService:
                 expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
                 dte = (expiry_date - today).days
                 
-                logger.debug(f"Getting option chain for IV calculation: {symbol} DTE={dte}")
+                if dte <= 0:
+                    continue
+                
+                # 获取期权链（静态数据）以获得期权代码
                 ret, chain_data = self._context.get_option_chain(
                     code=us_symbol,
                     start=expiry,
@@ -290,32 +295,67 @@ class FutuService:
                     option_cond_type=OptionCondType.ALL
                 )
                 
-                if ret == RET_OK and len(chain_data) > 0:
-                    # Get ATM option IV
-                    # Get underlying price first
-                    snapshot = await self.get_market_snapshot([symbol])
-                    if snapshot:
-                        underlying_price = snapshot[0]["price"]
+                if ret != RET_OK or len(chain_data) == 0:
+                    continue
+                
+                # Find ATM strike
+                strikes = chain_data["strike_price"].unique()
+                atm_strike = min(strikes, key=lambda x: abs(x - underlying_price))
+                
+                # 获取 ATM 期权代码
+                atm_options = chain_data[chain_data["strike_price"] == atm_strike]
+                if len(atm_options) == 0:
+                    continue
+                
+                # 获取 CALL 期权代码
+                call_options = atm_options[atm_options["option_type"] == "CALL"]
+                if len(call_options) == 0:
+                    continue
+                
+                option_codes = call_options["code"].tolist()
+                
+                if not option_codes:
+                    continue
+                
+                # 方法1: 尝试通过 get_market_snapshot 获取 IV
+                # get_market_snapshot 返回的期权数据包含 option_implied_volatility 字段
+                await self._rate_limit_check()
+                
+                try:
+                    ret, snapshot_data = self._context.get_market_snapshot(option_codes[:1])  # 只取第一个
+                    
+                    if ret == RET_OK and len(snapshot_data) > 0:
+                        # 尝试从 snapshot 中获取 IV
+                        # 字段可能是 'option_implied_volatility' 或 'implied_volatility'
+                        iv_value = None
                         
-                        # Find ATM strike
-                        strikes = chain_data["strike_price"].unique()
-                        atm_strike = min(strikes, key=lambda x: abs(x - underlying_price))
+                        for col in ['option_implied_volatility', 'implied_volatility']:
+                            if col in snapshot_data.columns:
+                                iv_raw = snapshot_data[col].iloc[0]
+                                if pd.notna(iv_raw) and iv_raw > 0:
+                                    iv_value = float(iv_raw)
+                                    break
                         
-                        atm_options = chain_data[chain_data["strike_price"] == atm_strike]
-                        if len(atm_options) > 0:
-                            # Get call IV
-                            call_iv = atm_options[atm_options["option_type"] == "CALL"]["implied_volatility"].mean()
-                            if not pd.isna(call_iv):
-                                iv_by_dte[dte] = call_iv
-                                logger.debug(f"IV for {symbol} DTE={dte}: {call_iv:.2f}")
+                        if iv_value and iv_value > 0:
+                            # Futu IV 可能是百分比形式（如 35.5 表示 35.5%）
+                            # 统一转换为小数形式存储
+                            if iv_value > 5:  # 如果大于5，可能是百分比形式
+                                iv_value = iv_value / 100.0
+                            iv_by_dte[dte] = iv_value
+                            logger.debug(f"{symbol} DTE={dte}: IV={iv_value:.4f}")
+                            
+                except Exception as snapshot_err:
+                    logger.debug(f"get_market_snapshot 获取 {symbol} IV 失败: {snapshot_err}")
             
             # Interpolate to get IV30, IV60, IV90
             if len(iv_by_dte) < 2:
-                logger.warning(f"Insufficient IV data points for {symbol}")
+                logger.warning(f"{symbol} 有效 IV 数据点不足: {len(iv_by_dte)}")
                 return None
             
             dtes = sorted(iv_by_dte.keys())
             ivs = [iv_by_dte[d] for d in dtes]
+            
+            logger.debug(f"{symbol} IV 数据: {dict(zip(dtes, ivs))}")
             
             # Simple linear interpolation
             def interpolate_iv(target_dte):
@@ -337,12 +377,10 @@ class FutuService:
             slope = iv30 - iv90
             
             duration_ms = (time.time() - start_time) * 1000
-            api_logger.log_response("GET", endpoint, "success", duration_ms,
-                                   {"iv30": iv30, "iv60": iv60, "iv90": iv90} if self.log_response_data else None,
-                                   self.log_response_data)
-            
-            logger.info(f"IV data calculated for {symbol} | IV30: {iv30:.2f} | IV60: {iv60:.2f} | "
-                       f"IV90: {iv90:.2f} | Slope: {slope:.2f}")
+            if self.log_api_calls:
+                api_logger.log_response("GET", endpoint, "success", duration_ms,
+                                       {"iv30": iv30, "iv60": iv60, "iv90": iv90} if self.log_response_data else None,
+                                       self.log_response_data)
             
             return {
                 "symbol": symbol,
@@ -355,7 +393,6 @@ class FutuService:
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             api_logger.log_error("GET", endpoint, e, duration_ms)
-            logger.error(f"Error getting option IV data for {symbol}: {e}", exc_info=True)
             return None
     
     async def calculate_positioning_score(self, symbol: str, lookback_days: int = 5) -> Optional[Dict]:
@@ -369,7 +406,6 @@ class FutuService:
                 # Get current option chain
                 options = await self.get_option_chain(symbol)
                 if not options:
-                    logger.warning(f"No option data available for positioning score: {symbol}")
                     return None
                 
                 # Group by expiry bucket
@@ -415,24 +451,26 @@ class FutuService:
                     "timestamp": datetime.now()
                 }
                 
-                logger.info(f"Positioning score calculated for {symbol} | "
-                           f"OI_0-7: Call={delta_oi_0_7_call}, Put={delta_oi_0_7_put}")
-                
                 return result
                 
             except Exception as e:
-                logger.error(f"Error calculating positioning score for {symbol}: {e}", exc_info=True)
+                logger.debug(f"Futu positioning {symbol} 异常: {e}")
                 return None
     
-    async def calculate_term_score(self, symbol: str) -> Optional[Dict]:
-        """Calculate TermScore based on IV term structure"""
+    async def calculate_term_score(self, symbol: str, underlying_price: float = None) -> Optional[Dict]:
+        """
+        Calculate TermScore based on IV term structure
+        
+        Args:
+            symbol: 股票代码
+            underlying_price: 标的价格（从IBKR获取）
+        """
         with LogContext(logger, "calculate_term_score", symbol=symbol):
-            iv_data = await self.get_option_iv_data(symbol)
+            iv_data = await self.get_option_iv_data(symbol, underlying_price)
             if not iv_data:
-                logger.warning(f"No IV data available for term score: {symbol}")
                 return None
             
-            result = {
+            return {
                 "symbol": symbol,
                 "iv30": iv_data["iv30"],
                 "iv60": iv_data["iv60"],
@@ -441,9 +479,6 @@ class FutuService:
                 "delta_slope": 0,  # Would need historical data
                 "timestamp": datetime.now()
             }
-            
-            logger.info(f"Term score calculated for {symbol} | Slope: {iv_data['slope']:.2f}")
-            return result
 
 
 # Singleton instance
@@ -456,14 +491,11 @@ def get_futu_service(host: str = None, port: int = None) -> FutuService:
     
     if _futu_service is None:
         _futu_service = FutuService(host, port)
-        logger.info("Created new FutuService instance")
     elif host or port:
-        # Update configuration if provided
         if host:
             _futu_service.host = host
         if port:
             _futu_service.port = port
-        logger.info(f"Updated FutuService configuration | Host: {_futu_service.host}:{_futu_service.port}")
     
     return _futu_service
 
@@ -471,8 +503,6 @@ def get_futu_service(host: str = None, port: int = None) -> FutuService:
 def reset_futu_service():
     """Reset the Futu service instance"""
     global _futu_service
-    if _futu_service:
-        logger.info("Resetting FutuService instance")
     _futu_service = None
 
 

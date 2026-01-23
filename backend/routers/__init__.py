@@ -8,6 +8,7 @@ from .import_data import router as import_router
 from .config import router as config_router
 from .options import router as options_router
 from .symbol_pool import router as symbol_pool_router
+from .data_trigger import router as data_trigger_router
 
 __all__ = [
     "etf_router",
@@ -16,5 +17,6 @@ __all__ = [
     "import_router",
     "config_router",
     "options_router",
-    "symbol_pool_router"
+    "symbol_pool_router",
+    "data_trigger_router"
 ]
