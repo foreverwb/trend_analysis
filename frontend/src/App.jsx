@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   TrendingUp, BarChart2, Activity, Flame, Zap, 
-  AlertCircle, Terminal, 
+  AlertCircle, Terminal, ClipboardList,
   ChevronDown, ChevronUp, RefreshCw 
 } from 'lucide-react';
 import * as api from './utils/api';
@@ -13,6 +13,9 @@ import SectorETFView from './components/SectorETFView';
 import IndustryETFView from './components/IndustryETFView';
 import MomentumStocksView from './components/MomentumStocksView';
 import DataLayerView from './components/DataLayerView';
+
+// Monitor Task Components
+import { MonitorTaskListView, TaskCreationWizard, TaskDetailView } from './components/monitor';
 
 // 控制台日志开关
 const DEBUG_MODE = localStorage.getItem('debugMode') === 'true';
@@ -28,6 +31,10 @@ const App = () => {
   const [selectedSector, setSelectedSector] = useState('XLK');
   const [expandedHoldings, setExpandedHoldings] = useState({});
   const [refreshingETF, setRefreshingETF] = useState(null);
+  
+  // Monitor Task Module States
+  const [monitorView, setMonitorView] = useState('list'); // 'list' | 'create' | 'detail'
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
   
   // Data states
   const [marketRegime, setMarketRegime] = useState({
@@ -299,12 +306,20 @@ const App = () => {
             { id: 'sector-etf', label: '板块 ETF' },
             { id: 'industry-etf', label: '行业 ETF' },
             { id: 'momentum-stocks', label: '动能股池' },
+            { id: 'monitor-tasks', label: '监控任务' },
             { id: 'data-layer', label: '数据层级' },
             { id: 'data-config', label: '数据配置中心' }
           ].map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                // 切换到监控任务时重置视图状态
+                if (tab.id === 'monitor-tasks') {
+                  setMonitorView('list');
+                  setSelectedTaskId(null);
+                }
+              }}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                 activeTab === tab.id
                   ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-md'
@@ -376,6 +391,46 @@ const App = () => {
           getOptionsHeatColor={getOptionsHeatColor}
           getHeatLevelColor={getHeatLevelColor}
         />
+      )}
+
+      {/* 监控任务模块 */}
+      {activeTab === 'monitor-tasks' && (
+        <>
+          {monitorView === 'list' && (
+            <MonitorTaskListView
+              onCreateTask={() => setMonitorView('create')}
+              onViewTask={(taskId) => {
+                setSelectedTaskId(taskId);
+                setMonitorView('detail');
+              }}
+            />
+          )}
+          
+          {monitorView === 'create' && (
+            <TaskCreationWizard
+              onComplete={(result) => {
+                // 创建成功后跳转到任务详情或返回列表
+                if (result?.id) {
+                  setSelectedTaskId(result.id);
+                  setMonitorView('detail');
+                } else {
+                  setMonitorView('list');
+                }
+              }}
+              onCancel={() => setMonitorView('list')}
+            />
+          )}
+          
+          {monitorView === 'detail' && selectedTaskId && (
+            <TaskDetailView
+              taskId={selectedTaskId}
+              onBack={() => {
+                setSelectedTaskId(null);
+                setMonitorView('list');
+              }}
+            />
+          )}
+        </>
       )}
 
       {/* 数据层级界面 */}
