@@ -20,7 +20,9 @@ from .routers import (
     config_router,
     options_router,
     symbol_pool_router,
-    data_trigger_router
+    data_trigger_router,
+    monitor_tasks_router,
+    monitor_data_import_router
 )
 
 # Initialize configuration
@@ -137,6 +139,8 @@ app.include_router(config_router)
 app.include_router(options_router)
 app.include_router(symbol_pool_router)
 app.include_router(data_trigger_router)
+app.include_router(monitor_tasks_router)
+app.include_router(monitor_data_import_router)
 
 
 @app.get("/")

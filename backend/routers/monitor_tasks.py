@@ -40,7 +40,7 @@ async def create_task(
             task_type=task_data.task_type.value,
             description=task_data.description,
             benchmark_symbol=task_data.benchmark_symbol,
-            top_n_coverage=task_data.top_n_coverage,
+            coverage_type=task_data.coverage_type,
             is_auto_refresh=task_data.is_auto_refresh,
             status=TaskStatus.DRAFT.value
         )
@@ -128,8 +128,8 @@ async def update_task(
             task.description = task_data.description
         if task_data.benchmark_symbol is not None:
             task.benchmark_symbol = task_data.benchmark_symbol
-        if task_data.top_n_coverage is not None:
-            task.top_n_coverage = task_data.top_n_coverage
+        if task_data.coverage_type is not None:
+            task.coverage_type = task_data.coverage_type
         if task_data.is_auto_refresh is not None:
             task.is_auto_refresh = task_data.is_auto_refresh
         if task_data.status is not None:
@@ -420,7 +420,7 @@ def _task_to_response(task: MonitorTask) -> TaskResponse:
         task_type=TaskType(task.task_type),
         description=task.description,
         benchmark_symbol=task.benchmark_symbol,
-        top_n_coverage=task.top_n_coverage,
+        coverage_type=task.coverage_type,
         is_auto_refresh=task.is_auto_refresh,
         status=TaskStatus(task.status),
         created_at=task.created_at,

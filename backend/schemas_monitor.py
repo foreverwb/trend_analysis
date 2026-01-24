@@ -83,7 +83,7 @@ class TaskBase(BaseModel):
     task_type: TaskType = Field(..., description="任务类型")
     description: Optional[str] = Field(None, description="任务描述")
     benchmark_symbol: str = Field(default="SPY", description="基准指数")
-    top_n_coverage: int = Field(default=15, ge=1, le=100, description="覆盖 Top N")
+    coverage_type: str = Field(default="top15", description="覆盖范围类型: top15/top20/top30/weight70/weight75/weight80/weight85/weight90")
     is_auto_refresh: bool = Field(default=True, description="是否自动刷新")
 
 
@@ -97,7 +97,7 @@ class TaskUpdate(BaseModel):
     task_name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
     benchmark_symbol: Optional[str] = None
-    top_n_coverage: Optional[int] = Field(None, ge=1, le=100)
+    coverage_type: Optional[str] = Field(None, description="覆盖范围类型")
     is_auto_refresh: Optional[bool] = None
     status: Optional[TaskStatus] = None
 

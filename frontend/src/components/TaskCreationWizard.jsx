@@ -85,7 +85,7 @@ const TaskCreationWizard = ({ onComplete, onCancel }) => {
     taskType: '',
     description: '',
     benchmarkSymbol: 'SPY',
-    topNCoverage: 15,
+    coverageType: 'top15', // 改为字符串，支持 top15, top20, top30, weight70, weight75, weight80, weight85, weight90
     isAutoRefresh: true,
     selectedSectorETFs: [],
     selectedIndustryETFs: []
@@ -94,6 +94,24 @@ const TaskCreationWizard = ({ onComplete, onCancel }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const totalSteps = 5;
+
+  // 覆盖范围选项
+  const COVERAGE_OPTIONS = [
+    { value: 'top15', label: 'Top 15', description: '前15大持仓' },
+    { value: 'top20', label: 'Top 20', description: '前20大持仓' },
+    { value: 'top30', label: 'Top 30', description: '前30大持仓' },
+    { value: 'weight70', label: 'Weight 70%', description: '累计权重达70%' },
+    { value: 'weight75', label: 'Weight 75%', description: '累计权重达75%' },
+    { value: 'weight80', label: 'Weight 80%', description: '累计权重达80%' },
+    { value: 'weight85', label: 'Weight 85%', description: '累计权重达85%' },
+    { value: 'weight90', label: 'Weight 90%', description: '累计权重达90%' }
+  ];
+
+  // 格式化覆盖范围显示
+  const formatCoverage = (value) => {
+    const option = COVERAGE_OPTIONS.find(o => o.value === value);
+    return option ? option.label : value;
+  };
 
   // 步骤验证
   const validateStep = (step) => {
@@ -162,7 +180,7 @@ const TaskCreationWizard = ({ onComplete, onCancel }) => {
         task_type: formData.taskType,
         description: formData.description,
         benchmark_symbol: formData.benchmarkSymbol,
-        top_n_coverage: formData.topNCoverage,
+        coverage_type: formData.coverageType,
         is_auto_refresh: formData.isAutoRefresh,
         etf_configs: etfConfigs
       };
@@ -281,15 +299,24 @@ const TaskCreationWizard = ({ onComplete, onCancel }) => {
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">覆盖范围 Top N</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">覆盖范围</label>
           <select
-            value={formData.topNCoverage}
-            onChange={e => setFormData({ ...formData, topNCoverage: parseInt(e.target.value) })}
+            value={formData.coverageType}
+            onChange={e => setFormData({ ...formData, coverageType: e.target.value })}
             className="w-full border rounded-lg px-3 py-2"
           >
-            {[10, 15, 20, 30].map(n => (
-              <option key={n} value={n}>{n}</option>
-            ))}
+            <optgroup label="按持仓数量">
+              <option value="top15">Top 15 - 前15大持仓</option>
+              <option value="top20">Top 20 - 前20大持仓</option>
+              <option value="top30">Top 30 - 前30大持仓</option>
+            </optgroup>
+            <optgroup label="按累计权重">
+              <option value="weight70">Weight 70% - 累计权重达70%</option>
+              <option value="weight75">Weight 75% - 累计权重达75%</option>
+              <option value="weight80">Weight 80% - 累计权重达80%</option>
+              <option value="weight85">Weight 85% - 累计权重达85%</option>
+              <option value="weight90">Weight 90% - 累计权重达90%</option>
+            </optgroup>
           </select>
         </div>
       </div>
@@ -381,7 +408,7 @@ const TaskCreationWizard = ({ onComplete, onCancel }) => {
         </div>
         <div className="border-b pb-3">
           <span className="text-sm text-gray-500">覆盖范围:</span>
-          <p className="font-medium">Top {formData.topNCoverage}</p>
+          <p className="font-medium">{formatCoverage(formData.coverageType)}</p>
         </div>
         <div>
           <span className="text-sm text-gray-500">已选择的 ETF:</span>

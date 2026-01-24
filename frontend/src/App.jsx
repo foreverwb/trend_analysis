@@ -287,50 +287,54 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 text-slate-900 p-4">
-      {/* 顶部导航 */}
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
-            <Terminal className="w-6 h-6 text-white" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 text-slate-900">
+      {/* 顶部导航 - 固定在顶部 */}
+      <div className="sticky top-0 z-40 bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 backdrop-blur-sm border-b border-slate-200/50 shadow-sm">
+        <div className="p-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+              <Terminal className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Momentum</h1>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">强势动能交易系统</h1>
-            <p className="text-sm text-slate-600">Momentum Trading System</p>
+          
+          <div className="flex gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm flex-wrap">
+            {[
+              { id: 'terminal', label: '核心终端' },
+              { id: 'sector-etf', label: '板块 ETF' },
+              { id: 'industry-etf', label: '行业 ETF' },
+              { id: 'momentum-stocks', label: '动能股池' },
+              { id: 'monitor-tasks', label: '监控任务' },
+              { id: 'data-layer', label: '数据层级' },
+              { id: 'data-config', label: '数据配置中心' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  // 切换到监控任务时重置视图状态
+                  if (tab.id === 'monitor-tasks') {
+                    setMonitorView('list');
+                    setSelectedTaskId(null);
+                  }
+                }}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  activeTab === tab.id
+                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-md'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-        </div>
-        
-        <div className="flex gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm flex-wrap">
-          {[
-            { id: 'terminal', label: '核心终端' },
-            { id: 'sector-etf', label: '板块 ETF' },
-            { id: 'industry-etf', label: '行业 ETF' },
-            { id: 'momentum-stocks', label: '动能股池' },
-            { id: 'monitor-tasks', label: '监控任务' },
-            { id: 'data-layer', label: '数据层级' },
-            { id: 'data-config', label: '数据配置中心' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => {
-                setActiveTab(tab.id);
-                // 切换到监控任务时重置视图状态
-                if (tab.id === 'monitor-tasks') {
-                  setMonitorView('list');
-                  setSelectedTaskId(null);
-                }
-              }}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                activeTab === tab.id
-                  ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
         </div>
       </div>
+      
+      {/* 主内容区域 */}
+      <div className="p-4">
 
       {loading && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
@@ -442,6 +446,7 @@ const App = () => {
       {activeTab === 'data-config' && (
         <DataConfigCenter />
       )}
+      </div>
     </div>
   );
 };

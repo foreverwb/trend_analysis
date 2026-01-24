@@ -18,7 +18,7 @@ class MonitorTask(Base):
     
     # 配置
     benchmark_symbol = Column(String(20), default='SPY')
-    top_n_coverage = Column(Integer, default=15)
+    coverage_type = Column(String(20), default='top15')  # 'top15' | 'top20' | 'top30' | 'weight70' | 'weight75' | 'weight80' | 'weight85' | 'weight90'
     
     # 状态
     status = Column(String(20), default='draft')  # 'draft' | 'active' | 'paused' | 'archived'
