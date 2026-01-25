@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, RefreshCw, Settings, Pause, Play, Archive,
   Calendar, Clock, Database, TrendingUp, AlertCircle,
-  Download, Plus, Trash2, MoreVertical
+  Download, Plus, Trash2, MoreVertical, Layers, Edit2, Check, X
 } from 'lucide-react';
 import DataImportPanel from './DataImportPanel';
 import ETFDataStatusCard from './ETFDataStatusCard';
 import ScoreTrendChart from './ScoreTrendChart';
+import { CoverageTag, CoverageMultiSelect, Drawer } from '../common';
+import { useCoverageOptions } from '../../hooks/useCoverageOptions';
 
 // 任务状态映射
 const STATUS_CONFIG = {
@@ -24,6 +26,9 @@ const TASK_TYPE_LABELS = {
 };
 
 const TaskDetailView = ({ taskId, onBack }) => {
+  // 覆盖范围配置选项
+  const { options: coverageOptions, getLabel: getCoverageLabel } = useCoverageOptions();
+  
   // 状态管理
   const [task, setTask] = useState(null);
   const [etfList, setEtfList] = useState([]);
@@ -38,6 +43,11 @@ const TaskDetailView = ({ taskId, onBack }) => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importETFSymbol, setImportETFSymbol] = useState(null);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  
+  // 覆盖范围编辑状态
+  const [isEditingCoverage, setIsEditingCoverage] = useState(false);
+  const [editingCoverageTypes, setEditingCoverageTypes] = useState([]);
+  const [isSavingCoverage, setIsSavingCoverage] = useState(false);
 
   // 加载任务数据
   const loadTaskData = useCallback(async () => {
@@ -163,6 +173,41 @@ const TaskDetailView = ({ taskId, onBack }) => {
       setError(err.message);
     }
     setShowSettingsMenu(false);
+  };
+
+  // 开始编辑覆盖范围
+  const handleStartEditCoverage = () => {
+    setEditingCoverageTypes(task.coverage_types || []);
+    setIsEditingCoverage(true);
+  };
+
+  // 取消编辑覆盖范围
+  const handleCancelEditCoverage = () => {
+    setIsEditingCoverage(false);
+    setEditingCoverageTypes([]);
+  };
+
+  // 保存覆盖范围
+  const handleSaveCoverage = async () => {
+    try {
+      setIsSavingCoverage(true);
+      const res = await fetch(`/api/monitor/tasks/${taskId}/coverage`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coverage_types: editingCoverageTypes })
+      });
+      
+      if (!res.ok) throw new Error('保存覆盖范围失败');
+      
+      // 更新本地状态
+      setTask(prev => ({ ...prev, coverage_types: editingCoverageTypes }));
+      setIsEditingCoverage(false);
+      setEditingCoverageTypes([]);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSavingCoverage(false);
+    }
   };
 
   // 加载状态
@@ -357,6 +402,79 @@ const TaskDetailView = ({ taskId, onBack }) => {
           </div>
         </div>
 
+        {/* 覆盖范围卡片 */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center text-gray-700">
+              <Layers className="w-5 h-5 mr-2" />
+              <span className="font-medium">覆盖范围</span>
+              {!isEditingCoverage && task.coverage_types?.length > 0 && (
+                <span className="ml-2 text-sm text-gray-400">
+                  ({task.coverage_types.length} 个)
+                </span>
+              )}
+            </div>
+            {!isEditingCoverage ? (
+              <button
+                onClick={handleStartEditCoverage}
+                className="flex items-center px-2 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors"
+              >
+                <Edit2 className="w-4 h-4 mr-1" />
+                编辑
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCancelEditCoverage}
+                  disabled={isSavingCoverage}
+                  className="flex items-center px-2 py-1 text-sm text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                >
+                  <X className="w-4 h-4 mr-1" />
+                  取消
+                </button>
+                <button
+                  onClick={handleSaveCoverage}
+                  disabled={isSavingCoverage}
+                  className="flex items-center px-3 py-1 text-sm text-white bg-blue-500 hover:bg-blue-600 rounded transition-colors disabled:opacity-50"
+                >
+                  {isSavingCoverage ? (
+                    <RefreshCw className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4 mr-1" />
+                  )}
+                  保存
+                </button>
+              </div>
+            )}
+          </div>
+          
+          {isEditingCoverage ? (
+            <div className="pt-1">
+              <CoverageMultiSelect
+                options={coverageOptions}
+                value={editingCoverageTypes}
+                onChange={setEditingCoverageTypes}
+                placeholder="选择覆盖范围..."
+              />
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {task.coverage_types && task.coverage_types.length > 0 ? (
+                task.coverage_types.map(type => (
+                  <CoverageTag
+                    key={type}
+                    value={type}
+                    label={getCoverageLabel(type)}
+                    size="md"
+                  />
+                ))
+              ) : (
+                <span className="text-sm text-gray-400">未设置覆盖范围</span>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* 评分趋势图表 */}
         <div className="mb-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
@@ -369,6 +487,7 @@ const TaskDetailView = ({ taskId, onBack }) => {
             etfList={etfList.map(e => ({ symbol: e.symbol, name: e.name }))}
             selectedETFs={selectedETFs.length > 0 ? selectedETFs : undefined}
             onETFSelectionChange={setSelectedETFs}
+            coverageTypes={task.coverage_types || []}
           />
         </div>
 
@@ -414,20 +533,28 @@ const TaskDetailView = ({ taskId, onBack }) => {
         </div>
       </div>
 
-      {/* 导入面板模态框 */}
-      {showImportModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <DataImportPanel
-            taskId={taskId}
-            etfSymbol={importETFSymbol}
-            onImportSuccess={handleImportSuccess}
-            onClose={() => {
-              setShowImportModal(false);
-              setImportETFSymbol(null);
-            }}
-          />
-        </div>
-      )}
+      {/* 导入面板 Drawer */}
+      <Drawer
+        open={showImportModal}
+        onClose={() => {
+          setShowImportModal(false);
+          setImportETFSymbol(null);
+        }}
+        title="数据导入"
+        subtitle={importETFSymbol ? `导入 ${importETFSymbol} 数据` : undefined}
+        width={520}
+      >
+        <DataImportPanel
+          taskId={taskId}
+          etfSymbol={importETFSymbol}
+          onImportSuccess={handleImportSuccess}
+          onClose={() => {
+            setShowImportModal(false);
+            setImportETFSymbol(null);
+          }}
+          isDrawerMode={true}
+        />
+      </Drawer>
 
       {/* 点击外部关闭设置菜单 */}
       {showSettingsMenu && (

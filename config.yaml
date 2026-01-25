@@ -109,3 +109,212 @@ cache:
   market_data_ttl: 60
   # ETF 数据缓存时间 (秒)
   etf_data_ttl: 300
+
+# ==============================================================================
+# 覆盖范围配置
+# Coverage Options Configuration
+# ==============================================================================
+coverage_options:
+  # 数量型选项（按持仓数量）
+  quantity_based:
+    - value: "top10"
+      label: "Top 10"
+      description: "前10大持仓"
+      enabled: true
+    - value: "top15"
+      label: "Top 15"
+      description: "前15大持仓"
+      enabled: true
+    - value: "top20"
+      label: "Top 20"
+      description: "前20大持仓"
+      enabled: true
+    - value: "top30"
+      label: "Top 30"
+      description: "前30大持仓"
+      enabled: true
+  
+  # 权重型选项（按累计权重）
+  weight_based:
+    - value: "weight70"
+      label: "Weight 70%"
+      description: "累计权重达70%"
+      enabled: true
+    - value: "weight75"
+      label: "Weight 75%"
+      description: "累计权重达75%"
+      enabled: true
+    - value: "weight80"
+      label: "Weight 80%"
+      description: "累计权重达80%"
+      enabled: true
+    - value: "weight85"
+      label: "Weight 85%"
+      description: "累计权重达85%"
+      enabled: true
+
+# ==============================================================================
+# ETF 持仓数据配置
+# ETF Holdings Data
+# ==============================================================================
+etf_holdings:
+  XLK:
+    name: "科技板块"
+    full_name: "Technology Select Sector SPDR Fund"
+    last_updated: "2026-01-24"
+    total_holdings: 70
+    holdings:
+      - { symbol: "NVDA", name: "NVIDIA Corporation", weight: 20.50 }
+      - { symbol: "AAPL", name: "Apple Inc.", weight: 15.80 }
+      - { symbol: "MSFT", name: "Microsoft Corporation", weight: 14.20 }
+      - { symbol: "AVGO", name: "Broadcom Inc.", weight: 5.10 }
+      - { symbol: "META", name: "Meta Platforms Inc.", weight: 4.80 }
+      - { symbol: "CRM", name: "Salesforce Inc.", weight: 3.20 }
+      - { symbol: "AMD", name: "Advanced Micro Devices", weight: 2.90 }
+      - { symbol: "ORCL", name: "Oracle Corporation", weight: 2.70 }
+      - { symbol: "CSCO", name: "Cisco Systems Inc.", weight: 2.40 }
+      - { symbol: "ACN", name: "Accenture plc", weight: 2.10 }
+      - { symbol: "ADBE", name: "Adobe Inc.", weight: 1.90 }
+      - { symbol: "IBM", name: "International Business Machines", weight: 1.80 }
+      - { symbol: "INTU", name: "Intuit Inc.", weight: 1.70 }
+      - { symbol: "TXN", name: "Texas Instruments", weight: 1.60 }
+      - { symbol: "QCOM", name: "QUALCOMM Inc.", weight: 1.50 }
+      - { symbol: "NOW", name: "ServiceNow Inc.", weight: 1.40 }
+      - { symbol: "AMAT", name: "Applied Materials Inc.", weight: 1.30 }
+      - { symbol: "PANW", name: "Palo Alto Networks", weight: 1.20 }
+      - { symbol: "LRCX", name: "Lam Research Corp.", weight: 1.10 }
+      - { symbol: "MU", name: "Micron Technology Inc.", weight: 1.00 }
+      - { symbol: "KLAC", name: "KLA Corporation", weight: 0.90 }
+      - { symbol: "SNPS", name: "Synopsys Inc.", weight: 0.85 }
+      - { symbol: "CDNS", name: "Cadence Design Systems", weight: 0.80 }
+      - { symbol: "CRWD", name: "CrowdStrike Holdings", weight: 0.75 }
+      - { symbol: "ADSK", name: "Autodesk Inc.", weight: 0.70 }
+      - { symbol: "MRVL", name: "Marvell Technology", weight: 0.65 }
+      - { symbol: "FTNT", name: "Fortinet Inc.", weight: 0.60 }
+      - { symbol: "NXPI", name: "NXP Semiconductors", weight: 0.55 }
+      - { symbol: "APH", name: "Amphenol Corporation", weight: 0.50 }
+      - { symbol: "MPWR", name: "Monolithic Power Systems", weight: 0.45 }
+
+  XLF:
+    name: "金融板块"
+    full_name: "Financial Select Sector SPDR Fund"
+    last_updated: "2026-01-24"
+    total_holdings: 75
+    holdings:
+      - { symbol: "BRK.B", name: "Berkshire Hathaway", weight: 13.50 }
+      - { symbol: "JPM", name: "JPMorgan Chase & Co.", weight: 10.20 }
+      - { symbol: "V", name: "Visa Inc.", weight: 8.10 }
+      - { symbol: "MA", name: "Mastercard Inc.", weight: 7.50 }
+      - { symbol: "BAC", name: "Bank of America Corp.", weight: 4.80 }
+      - { symbol: "WFC", name: "Wells Fargo & Company", weight: 3.90 }
+      - { symbol: "GS", name: "Goldman Sachs Group", weight: 3.20 }
+      - { symbol: "SPGI", name: "S&P Global Inc.", weight: 2.80 }
+      - { symbol: "MS", name: "Morgan Stanley", weight: 2.60 }
+      - { symbol: "AXP", name: "American Express Co.", weight: 2.40 }
+      - { symbol: "BLK", name: "BlackRock Inc.", weight: 2.20 }
+      - { symbol: "PGR", name: "Progressive Corporation", weight: 2.00 }
+      - { symbol: "C", name: "Citigroup Inc.", weight: 1.80 }
+      - { symbol: "SCHW", name: "Charles Schwab Corp.", weight: 1.60 }
+      - { symbol: "CB", name: "Chubb Limited", weight: 1.50 }
+
+  XLV:
+    name: "医疗保健板块"
+    full_name: "Health Care Select Sector SPDR Fund"
+    last_updated: "2026-01-24"
+    total_holdings: 65
+    holdings:
+      - { symbol: "LLY", name: "Eli Lilly and Company", weight: 12.80 }
+      - { symbol: "UNH", name: "UnitedHealth Group", weight: 10.50 }
+      - { symbol: "JNJ", name: "Johnson & Johnson", weight: 7.20 }
+      - { symbol: "MRK", name: "Merck & Co. Inc.", weight: 5.80 }
+      - { symbol: "ABBV", name: "AbbVie Inc.", weight: 5.50 }
+      - { symbol: "TMO", name: "Thermo Fisher Scientific", weight: 4.20 }
+      - { symbol: "PFE", name: "Pfizer Inc.", weight: 3.80 }
+      - { symbol: "ABT", name: "Abbott Laboratories", weight: 3.50 }
+      - { symbol: "DHR", name: "Danaher Corporation", weight: 3.20 }
+      - { symbol: "AMGN", name: "Amgen Inc.", weight: 2.90 }
+      - { symbol: "BMY", name: "Bristol-Myers Squibb", weight: 2.50 }
+      - { symbol: "ISRG", name: "Intuitive Surgical", weight: 2.30 }
+      - { symbol: "VRTX", name: "Vertex Pharmaceuticals", weight: 2.10 }
+      - { symbol: "SYK", name: "Stryker Corporation", weight: 1.90 }
+      - { symbol: "GILD", name: "Gilead Sciences", weight: 1.70 }
+
+  XLE:
+    name: "能源板块"
+    full_name: "Energy Select Sector SPDR Fund"
+    last_updated: "2026-01-24"
+    total_holdings: 25
+    holdings:
+      - { symbol: "XOM", name: "Exxon Mobil Corporation", weight: 23.50 }
+      - { symbol: "CVX", name: "Chevron Corporation", weight: 17.80 }
+      - { symbol: "COP", name: "ConocoPhillips", weight: 8.20 }
+      - { symbol: "EOG", name: "EOG Resources Inc.", weight: 5.50 }
+      - { symbol: "SLB", name: "Schlumberger Limited", weight: 4.80 }
+      - { symbol: "MPC", name: "Marathon Petroleum", weight: 4.20 }
+      - { symbol: "PSX", name: "Phillips 66", weight: 3.80 }
+      - { symbol: "WMB", name: "Williams Companies", weight: 3.50 }
+      - { symbol: "VLO", name: "Valero Energy Corp.", weight: 3.20 }
+      - { symbol: "OKE", name: "ONEOK Inc.", weight: 2.90 }
+      - { symbol: "KMI", name: "Kinder Morgan Inc.", weight: 2.50 }
+      - { symbol: "HAL", name: "Halliburton Company", weight: 2.20 }
+      - { symbol: "BKR", name: "Baker Hughes Company", weight: 1.90 }
+      - { symbol: "DVN", name: "Devon Energy Corp.", weight: 1.70 }
+      - { symbol: "FANG", name: "Diamondback Energy", weight: 1.50 }
+
+  XLY:
+    name: "可选消费板块"
+    full_name: "Consumer Discretionary Select Sector SPDR Fund"
+    last_updated: "2026-01-24"
+    total_holdings: 55
+    holdings:
+      - { symbol: "AMZN", name: "Amazon.com Inc.", weight: 22.80 }
+      - { symbol: "TSLA", name: "Tesla Inc.", weight: 15.50 }
+      - { symbol: "HD", name: "Home Depot Inc.", weight: 8.20 }
+      - { symbol: "MCD", name: "McDonald's Corporation", weight: 4.50 }
+      - { symbol: "NKE", name: "Nike Inc.", weight: 3.80 }
+      - { symbol: "LOW", name: "Lowe's Companies", weight: 3.50 }
+      - { symbol: "SBUX", name: "Starbucks Corporation", weight: 3.20 }
+      - { symbol: "BKNG", name: "Booking Holdings", weight: 2.90 }
+      - { symbol: "TJX", name: "TJX Companies Inc.", weight: 2.60 }
+      - { symbol: "CMG", name: "Chipotle Mexican Grill", weight: 2.40 }
+      - { symbol: "ORLY", name: "O'Reilly Automotive", weight: 2.10 }
+      - { symbol: "MAR", name: "Marriott International", weight: 1.90 }
+      - { symbol: "GM", name: "General Motors Company", weight: 1.70 }
+      - { symbol: "F", name: "Ford Motor Company", weight: 1.50 }
+      - { symbol: "DHI", name: "D.R. Horton Inc.", weight: 1.30 }
+
+# ==============================================================================
+# 数据源快捷链接配置
+# Data Source Quick Links
+# ==============================================================================
+data_source_links:
+  finviz:
+    name: "Finviz Screener"
+    base_url: "https://finviz.com/screener.ashx"
+    description: "技术指标数据"
+    default_params: "v=152&ft=4"
+  
+  market_chameleon:
+    name: "MarketChameleon"
+    base_url: "https://marketchameleon.com"
+    description: "期权数据"
+  
+  yahoo_finance:
+    name: "Yahoo Finance"
+    base_url: "https://finance.yahoo.com"
+    description: "行情数据"
+    enabled: true
+
+# ==============================================================================
+# 系统默认值配置
+# System Defaults
+# ==============================================================================
+defaults:
+  # 默认覆盖范围（创建任务时不选择的默认值）
+  coverage_types: ["top15"]
+  
+  # 持仓提示预览数量
+  holdings_preview_count: 5
+  
+  # 持仓提示展开区域最大高度
+  holdings_expanded_max_height: 128

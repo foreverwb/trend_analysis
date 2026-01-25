@@ -2,7 +2,7 @@
 Data Source Configuration API Routes
 Handles IBKR and Futu connection configuration
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
@@ -14,9 +14,60 @@ from ..schemas import (
     DataSourceConfigResponse, ConnectionTestResult
 )
 from ..services import get_ibkr_service, get_futu_service
+from ..config_loader import (
+    get_coverage_options, get_etf_holdings, 
+    get_required_holdings, get_data_source_links,
+    reload_coverage_config
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/config", tags=["Configuration"])
+
+
+# ==================== 覆盖范围配置 API ====================
+
+@router.get("/coverage-options")
+async def get_coverage_options_api():
+    """获取覆盖范围配置选项"""
+    return get_coverage_options()
+
+
+@router.get("/etf-holdings/{etf_symbol}")
+async def get_etf_holdings_api(etf_symbol: str):
+    """获取ETF持仓数据"""
+    holdings = get_etf_holdings(etf_symbol)
+    if not holdings:
+        raise HTTPException(status_code=404, detail=f"ETF {etf_symbol} not found")
+    return holdings
+
+
+@router.get("/etf-holdings/{etf_symbol}/required")
+async def get_required_holdings_api(
+    etf_symbol: str,
+    coverage_type: str = Query(..., description="覆盖范围类型，如 top15, weight80")
+):
+    """根据覆盖范围类型获取需要收集数据的持仓标的"""
+    result = get_required_holdings(etf_symbol, coverage_type)
+    if not result.get('holdings'):
+        # 返回空结果而不是404，因为可能是配置中没有该ETF的数据
+        return result
+    return result
+
+
+@router.get("/data-source-links")
+async def get_data_source_links_api():
+    """获取数据源快捷链接配置"""
+    return get_data_source_links()
+
+
+@router.post("/coverage/reload")
+async def reload_coverage_config_api():
+    """强制重新加载覆盖范围配置（用于配置更新后刷新）"""
+    reload_coverage_config()
+    return {"message": "Coverage config reloaded successfully"}
+
+
+# ==================== 数据源配置 API ====================
 
 
 @router.get("/datasources")

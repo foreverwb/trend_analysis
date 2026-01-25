@@ -1,6 +1,8 @@
 """
 Monitor Task Models - 监控任务相关数据模型
 """
+import json
+from typing import List
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, ForeignKey, Date, DECIMAL
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -18,11 +20,37 @@ class MonitorTask(Base):
     
     # 配置
     benchmark_symbol = Column(String(20), default='SPY')
-    coverage_type = Column(String(20), default='top15')  # 'top15' | 'top20' | 'top30' | 'weight70' | 'weight75' | 'weight80' | 'weight85' | 'weight90'
+    # 保留旧字段以向后兼容
+    coverage_type = Column(String(20), default='top15')
+    # 新增：支持多选的覆盖范围（JSON数组存储）
+    coverage_types = Column(Text, default='["top15"]')
     
     # 状态
     status = Column(String(20), default='draft')  # 'draft' | 'active' | 'paused' | 'archived'
     is_auto_refresh = Column(Boolean, default=True)
+    
+    @property
+    def coverage_types_list(self) -> List[str]:
+        """获取覆盖范围列表"""
+        try:
+            if self.coverage_types:
+                result = json.loads(self.coverage_types)
+                return result if isinstance(result, list) else []
+            # 向后兼容：如果没有 coverage_types，使用 coverage_type
+            return [self.coverage_type] if self.coverage_type else []
+        except (json.JSONDecodeError, TypeError):
+            return [self.coverage_type] if self.coverage_type else []
+    
+    @coverage_types_list.setter
+    def coverage_types_list(self, value: List[str]):
+        """设置覆盖范围列表"""
+        if value and isinstance(value, list):
+            self.coverage_types = json.dumps(value)
+            # 同步更新旧字段（取第一个值）
+            self.coverage_type = value[0] if value else 'top15'
+        else:
+            self.coverage_types = '[]'
+            self.coverage_type = 'top15'
     
     # 时间戳
     created_at = Column(DateTime, default=datetime.utcnow)

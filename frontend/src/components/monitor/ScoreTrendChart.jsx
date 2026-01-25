@@ -3,7 +3,8 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Area, ComposedChart, Bar
 } from 'recharts';
-import { Calendar, TrendingUp, Filter, Download } from 'lucide-react';
+import { Calendar, TrendingUp, Filter, Download, Layers, ChevronDown } from 'lucide-react';
+import { useCoverageOptions } from '../../hooks/useCoverageOptions';
 
 // 时间范围选项
 const TIME_RANGES = [
@@ -73,10 +74,16 @@ const ScoreTrendChart = ({
   etfList = [],
   selectedETFs,
   onETFSelectionChange,
+  coverageTypes = [],
   height = 400
 }) => {
   const [timeRange, setTimeRange] = useState('14d');
   const [viewMode, setViewMode] = useState('score');
+  const [selectedCoverage, setSelectedCoverage] = useState('all');
+  const [showCoverageDropdown, setShowCoverageDropdown] = useState(false);
+  
+  // 获取覆盖范围标签
+  const { getLabel: getCoverageLabel } = useCoverageOptions();
 
   // 过滤和处理数据
   const chartData = useMemo(() => {
@@ -90,7 +97,17 @@ const ScoreTrendChart = ({
     const groupedByDate = {};
     
     scoreHistory
-      .filter(item => new Date(item.snapshot_date) >= cutoffDate)
+      .filter(item => {
+        // 时间范围过滤
+        if (new Date(item.snapshot_date) < cutoffDate) return false;
+        
+        // 覆盖范围过滤
+        if (selectedCoverage !== 'all' && item.coverage_type && item.coverage_type !== selectedCoverage) {
+          return false;
+        }
+        
+        return true;
+      })
       .forEach(item => {
         const date = item.snapshot_date;
         if (!groupedByDate[date]) {
@@ -117,7 +134,7 @@ const ScoreTrendChart = ({
     return Object.values(groupedByDate).sort((a, b) => 
       new Date(a.date) - new Date(b.date)
     );
-  }, [scoreHistory, timeRange, viewMode, selectedETFs]);
+  }, [scoreHistory, timeRange, viewMode, selectedETFs, selectedCoverage]);
 
   // 获取当前选中的 ETF 列表
   const activeETFs = useMemo(() => {
@@ -288,6 +305,58 @@ const ScoreTrendChart = ({
               </button>
             ))}
           </div>
+
+          {/* 覆盖范围筛选 */}
+          {coverageTypes.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowCoverageDropdown(!showCoverageDropdown)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+              >
+                <Layers className="w-4 h-4" />
+                <span>
+                  {selectedCoverage === 'all' 
+                    ? '全部覆盖范围' 
+                    : getCoverageLabel(selectedCoverage)}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showCoverageDropdown ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {showCoverageDropdown && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-10"
+                    onClick={() => setShowCoverageDropdown(false)}
+                  />
+                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
+                    <button
+                      onClick={() => {
+                        setSelectedCoverage('all');
+                        setShowCoverageDropdown(false);
+                      }}
+                      className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 transition-colors
+                        ${selectedCoverage === 'all' ? 'text-blue-600 bg-blue-50' : 'text-gray-700'}`}
+                    >
+                      全部覆盖范围
+                    </button>
+                    {coverageTypes.map(type => (
+                      <button
+                        key={type}
+                        onClick={() => {
+                          setSelectedCoverage(type);
+                          setShowCoverageDropdown(false);
+                        }}
+                        className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 transition-colors
+                          ${selectedCoverage === type ? 'text-blue-600 bg-blue-50' : 'text-gray-700'}`}
+                      >
+                        {getCoverageLabel(type)}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ETF 筛选 */}

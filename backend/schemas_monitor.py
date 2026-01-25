@@ -83,7 +83,10 @@ class TaskBase(BaseModel):
     task_type: TaskType = Field(..., description="任务类型")
     description: Optional[str] = Field(None, description="任务描述")
     benchmark_symbol: str = Field(default="SPY", description="基准指数")
-    coverage_type: str = Field(default="top15", description="覆盖范围类型: top15/top20/top30/weight70/weight75/weight80/weight85/weight90")
+    # 保留旧字段以向后兼容
+    coverage_type: Optional[str] = Field(default="top15", description="覆盖范围类型（单选，向后兼容）")
+    # 新增：支持多选
+    coverage_types: Optional[List[str]] = Field(default=None, description="覆盖范围类型数组（多选）")
     is_auto_refresh: bool = Field(default=True, description="是否自动刷新")
 
 
@@ -97,9 +100,15 @@ class TaskUpdate(BaseModel):
     task_name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
     benchmark_symbol: Optional[str] = None
-    coverage_type: Optional[str] = Field(None, description="覆盖范围类型")
+    coverage_type: Optional[str] = Field(None, description="覆盖范围类型（单选，向后兼容）")
+    coverage_types: Optional[List[str]] = Field(None, description="覆盖范围类型数组（多选）")
     is_auto_refresh: Optional[bool] = None
     status: Optional[TaskStatus] = None
+
+
+class CoverageUpdateRequest(BaseModel):
+    """覆盖范围更新请求"""
+    coverage_types: List[str] = Field(..., description="覆盖范围类型数组")
 
 
 class TaskResponse(TaskBase):

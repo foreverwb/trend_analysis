@@ -18,6 +18,7 @@ from ..schemas_monitor import (
     TaskStatus, TaskType, ETFLevel,
     DataStatusResponse, TaskDataStatusResponse,
     ScoreResponse, TaskScoreResponse,
+    CoverageUpdateRequest,
     get_etf_metadata
 )
 
@@ -34,16 +35,21 @@ async def create_task(
 ):
     """创建监控任务"""
     try:
+        # 处理覆盖范围（优先使用 coverage_types 数组，向后兼容 coverage_type）
+        coverage_types_list = task_data.coverage_types or ([task_data.coverage_type] if task_data.coverage_type else ['top15'])
+        
         # 创建任务
         task = MonitorTask(
             task_name=task_data.task_name,
             task_type=task_data.task_type.value,
             description=task_data.description,
             benchmark_symbol=task_data.benchmark_symbol,
-            coverage_type=task_data.coverage_type,
             is_auto_refresh=task_data.is_auto_refresh,
             status=TaskStatus.DRAFT.value
         )
+        # 使用属性设置器同时更新 coverage_type 和 coverage_types
+        task.coverage_types_list = coverage_types_list
+        
         db.add(task)
         db.flush()  # 获取 task.id
         
@@ -128,8 +134,11 @@ async def update_task(
             task.description = task_data.description
         if task_data.benchmark_symbol is not None:
             task.benchmark_symbol = task_data.benchmark_symbol
-        if task_data.coverage_type is not None:
-            task.coverage_type = task_data.coverage_type
+        # 处理覆盖范围更新（优先使用数组格式）
+        if task_data.coverage_types is not None:
+            task.coverage_types_list = task_data.coverage_types
+        elif task_data.coverage_type is not None:
+            task.coverage_types_list = [task_data.coverage_type]
         if task_data.is_auto_refresh is not None:
             task.is_auto_refresh = task_data.is_auto_refresh
         if task_data.status is not None:
@@ -147,6 +156,39 @@ async def update_task(
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to update task: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/{task_id}/coverage")
+async def update_task_coverage(
+    task_id: int,
+    request: CoverageUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """更新任务的覆盖范围"""
+    task = db.query(MonitorTask).filter(MonitorTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    try:
+        task.coverage_types_list = request.coverage_types
+        task.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(task)
+        
+        logger.info(f"Updated coverage for task {task_id}: {request.coverage_types}")
+        
+        return {
+            "success": True,
+            "task_id": task_id,
+            "coverage_types": task.coverage_types_list,
+            "updated_at": task.updated_at
+        }
+    
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to update coverage: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -421,6 +463,7 @@ def _task_to_response(task: MonitorTask) -> TaskResponse:
         description=task.description,
         benchmark_symbol=task.benchmark_symbol,
         coverage_type=task.coverage_type,
+        coverage_types=task.coverage_types_list,
         is_auto_refresh=task.is_auto_refresh,
         status=TaskStatus(task.status),
         created_at=task.created_at,

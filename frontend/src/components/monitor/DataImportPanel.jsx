@@ -1,8 +1,12 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { 
   Upload, FileText, AlertCircle, CheckCircle, Loader2, 
-  X, Copy, Download, FileJson, RefreshCw
+  X, Copy, Download, FileJson, RefreshCw, ChevronDown
 } from 'lucide-react';
+import { HoldingsHint } from '../common';
+import { useCoverageOptions } from '../../hooks/useCoverageOptions';
+import { useEtfHoldings } from '../../hooks/useEtfHoldings';
+import { useDataSourceLinks } from '../../hooks/useDataSourceLinks';
 
 // 数据源类型
 const DATA_SOURCES = [
@@ -18,10 +22,12 @@ const INPUT_METHODS = [
 
 const DataImportPanel = ({ 
   taskId, 
-  etfSymbol, 
+  etfSymbol,
+  etfName,
   onImportSuccess, 
   onClose,
-  defaultSource = 'finviz'
+  defaultSource = 'finviz',
+  isDrawerMode = false
 }) => {
   const [dataSource, setDataSource] = useState(defaultSource);
   const [inputMethod, setInputMethod] = useState('text');
@@ -32,7 +38,25 @@ const DataImportPanel = ({
   const [errors, setErrors] = useState([]);
   const [warnings, setWarnings] = useState([]);
   
+  // 覆盖范围选择状态
+  const [selectedCoverage, setSelectedCoverage] = useState('top15');
+  const [showCoverageDropdown, setShowCoverageDropdown] = useState(false);
+  
   const fileInputRef = useRef(null);
+  const coverageDropdownRef = useRef(null);
+
+  // 获取覆盖范围选项
+  const { options: coverageOptions, getLabel: getCoverageLabel } = useCoverageOptions();
+  
+  // 获取持仓数据
+  const { 
+    holdings, 
+    totalWeight, 
+    loading: holdingsLoading 
+  } = useEtfHoldings(etfSymbol, selectedCoverage);
+
+  // 获取数据源快捷链接
+  const { links: dataSourceLinks } = useDataSourceLinks();
 
   // 验证 JSON 格式
   const validateJSON = (content) => {
@@ -171,7 +195,6 @@ const DataImportPanel = ({
           if (typeof result.detail === 'string') {
             errorMessages = [result.detail];
           } else if (Array.isArray(result.detail)) {
-            // Pydantic 验证错误格式: [{type, loc, msg, input}, ...]
             errorMessages = result.detail.map(err => 
               typeof err === 'string' ? err : (err.msg || JSON.stringify(err))
             );
@@ -186,7 +209,6 @@ const DataImportPanel = ({
       }
 
       setImportResult(result);
-      // 确保 warnings 是字符串数组
       const warningMessages = (result.warnings || []).map(w => 
         typeof w === 'string' ? w : JSON.stringify(w)
       );
@@ -255,23 +277,139 @@ const DataImportPanel = ({
     setErrors([]);
   };
 
+  // 动态生成 placeholder
+  const getPlaceholder = () => {
+    if (holdings.length > 0) {
+      const previewSymbols = holdings.slice(0, 3).map(h => h.symbol).join(', ');
+      return `粘贴包含 ${previewSymbols} 等标的的 JSON 数据...`;
+    }
+    return `粘贴 ${DATA_SOURCES.find(s => s.id === dataSource)?.name} JSON 数据...`;
+  };
+
+  // 合并所有覆盖范围选项
+  const allCoverageOptions = [
+    ...(coverageOptions.quantity_based || []),
+    ...(coverageOptions.weight_based || [])
+  ];
+
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6 max-w-2xl w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-800">导入数据</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            {etfSymbol ? `为 ${etfSymbol} 导入第三方数据` : '请先选择 ETF'}
-          </p>
+    <div className={isDrawerMode ? '' : 'bg-white rounded-lg shadow-lg p-6 max-w-2xl w-full'}>
+      {/* Header - 仅在非 Drawer 模式下显示 */}
+      {!isDrawerMode && (
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800">导入数据</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              {etfSymbol ? `为 ${etfSymbol} 导入第三方数据` : '请先选择 ETF'}
+            </p>
+          </div>
+          {onClose && (
+            <button 
+              onClick={onClose}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+          )}
         </div>
-        {onClose && (
-          <button 
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+      )}
+
+      {/* 覆盖范围选择 */}
+      <div className="mb-4">
+        <label className="block text-sm font-semibold text-gray-700 mb-2">
+          覆盖范围
+        </label>
+        <div className="relative" ref={coverageDropdownRef}>
+          <button
+            type="button"
+            onClick={() => setShowCoverageDropdown(!showCoverageDropdown)}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-left bg-gray-50
+              focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+              flex items-center justify-between"
           >
-            <X className="w-5 h-5 text-gray-400" />
+            <span className="text-gray-700">
+              {getCoverageLabel(selectedCoverage)} - {
+                allCoverageOptions.find(o => o.value === selectedCoverage)?.description || ''
+              }
+            </span>
+            <ChevronDown 
+              className={`text-gray-400 transition-transform ${showCoverageDropdown ? 'rotate-180' : ''}`} 
+              size={18} 
+            />
           </button>
+          
+          {showCoverageDropdown && (
+            <>
+              <div 
+                className="fixed inset-0 z-10"
+                onClick={() => setShowCoverageDropdown(false)}
+              />
+              <div className="absolute z-20 w-full mt-1 bg-white rounded-xl shadow-lg border border-gray-200 py-2 max-h-64 overflow-y-auto">
+                {/* 数量型选项 */}
+                {coverageOptions.quantity_based?.length > 0 && (
+                  <>
+                    <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      数量型
+                    </div>
+                    {coverageOptions.quantity_based.filter(opt => opt.enabled !== false).map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => {
+                          setSelectedCoverage(opt.value);
+                          setShowCoverageDropdown(false);
+                        }}
+                        className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 transition-colors
+                          ${selectedCoverage === opt.value ? 'text-blue-600 bg-blue-50' : 'text-gray-700'}`}
+                      >
+                        <span className="font-medium">{opt.label}</span>
+                        <span className="text-gray-500 ml-2">- {opt.description}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+                
+                {/* 权重型选项 */}
+                {coverageOptions.weight_based?.length > 0 && (
+                  <>
+                    <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide mt-2">
+                      权重型
+                    </div>
+                    {coverageOptions.weight_based.filter(opt => opt.enabled !== false).map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => {
+                          setSelectedCoverage(opt.value);
+                          setShowCoverageDropdown(false);
+                        }}
+                        className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 transition-colors
+                          ${selectedCoverage === opt.value ? 'text-amber-600 bg-amber-50' : 'text-gray-700'}`}
+                      >
+                        <span className="font-medium">{opt.label}</span>
+                        <span className="text-gray-500 ml-2">- {opt.description}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* 持仓标的提示 */}
+      <div className="mb-4">
+        {holdingsLoading ? (
+          <div className="bg-gray-50 rounded-xl p-4 text-center text-gray-500 flex items-center justify-center gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            加载持仓数据中...
+          </div>
+        ) : (
+          <HoldingsHint 
+            holdings={holdings}
+            totalWeight={totalWeight}
+            coverageLabel={getCoverageLabel(selectedCoverage)}
+            dataSourceLinks={dataSourceLinks}
+          />
         )}
       </div>
 
@@ -348,10 +486,11 @@ const DataImportPanel = ({
                 setTextContent(e.target.value);
                 setErrors([]);
               }}
-              placeholder={`粘贴 ${DATA_SOURCES.find(s => s.id === dataSource)?.name} JSON 数据...`}
-              rows={10}
+              placeholder={getPlaceholder()}
+              rows={8}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 font-mono text-sm
-                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                bg-gray-50 resize-none"
             />
           </div>
         ) : (

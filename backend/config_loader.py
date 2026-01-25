@@ -342,3 +342,143 @@ def get_current_config() -> AppConfig:
     if _config is None:
         _config = init_config()
     return _config
+
+
+# ============================================================
+# 覆盖范围配置相关函数
+# ============================================================
+
+_coverage_config_cache = None
+
+def _load_coverage_config() -> dict:
+    """加载覆盖范围相关配置"""
+    global _coverage_config_cache
+    if _coverage_config_cache is not None:
+        return _coverage_config_cache
+    
+    config_path = _find_config_file()
+    if config_path:
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+            _coverage_config_cache = config
+            return config
+        except Exception as e:
+            logger.warning(f"Failed to load coverage config: {e}")
+    
+    return {}
+
+
+def reload_coverage_config() -> dict:
+    """强制重新加载覆盖范围配置"""
+    global _coverage_config_cache
+    _coverage_config_cache = None
+    return _load_coverage_config()
+
+
+def get_coverage_options() -> dict:
+    """获取覆盖范围配置选项"""
+    config = _load_coverage_config()
+    options = config.get('coverage_options', {})
+    
+    # 如果配置文件中没有，返回默认值
+    if not options:
+        options = {
+            'quantity_based': [
+                {'value': 'top10', 'label': 'Top 10', 'description': '前10大持仓', 'enabled': True},
+                {'value': 'top15', 'label': 'Top 15', 'description': '前15大持仓', 'enabled': True},
+                {'value': 'top20', 'label': 'Top 20', 'description': '前20大持仓', 'enabled': True},
+                {'value': 'top30', 'label': 'Top 30', 'description': '前30大持仓', 'enabled': True},
+            ],
+            'weight_based': [
+                {'value': 'weight70', 'label': 'Weight 70%', 'description': '累计权重达70%', 'enabled': True},
+                {'value': 'weight75', 'label': 'Weight 75%', 'description': '累计权重达75%', 'enabled': True},
+                {'value': 'weight80', 'label': 'Weight 80%', 'description': '累计权重达80%', 'enabled': True},
+                {'value': 'weight85', 'label': 'Weight 85%', 'description': '累计权重达85%', 'enabled': True},
+            ]
+        }
+    
+    return options
+
+
+def get_etf_holdings(etf_symbol: str) -> Optional[dict]:
+    """获取ETF持仓数据"""
+    config = _load_coverage_config()
+    holdings_config = config.get('etf_holdings', {})
+    return holdings_config.get(etf_symbol.upper())
+
+
+def get_required_holdings(etf_symbol: str, coverage_type: str) -> dict:
+    """根据覆盖范围获取需要的持仓标的"""
+    etf_data = get_etf_holdings(etf_symbol)
+    if not etf_data:
+        return {
+            'etf_symbol': etf_symbol,
+            'coverage_type': coverage_type,
+            'holdings': [],
+            'total_weight': 0,
+            'count': 0,
+            'symbols_text': ''
+        }
+    
+    holdings = etf_data.get('holdings', [])
+    selected = []
+    
+    if coverage_type.startswith('top'):
+        # 数量型：取前 N 个
+        try:
+            count = int(coverage_type.replace('top', ''))
+            selected = holdings[:count]
+        except ValueError:
+            selected = holdings[:15]  # 默认 top15
+    elif coverage_type.startswith('weight'):
+        # 权重型：累计权重达到目标
+        try:
+            target_weight = int(coverage_type.replace('weight', ''))
+        except ValueError:
+            target_weight = 80  # 默认 80%
+        
+        cum_weight = 0
+        for h in holdings:
+            if cum_weight >= target_weight:
+                break
+            selected.append(h)
+            cum_weight += h.get('weight', 0)
+    else:
+        # 未知类型，返回 top15
+        selected = holdings[:15]
+    
+    total_weight = sum(h.get('weight', 0) for h in selected)
+    symbols = [h.get('symbol', '') for h in selected]
+    
+    return {
+        'etf_symbol': etf_symbol,
+        'coverage_type': coverage_type,
+        'holdings': selected,
+        'total_weight': round(total_weight, 2),
+        'count': len(selected),
+        'symbols_text': ', '.join(symbols)
+    }
+
+
+def get_data_source_links() -> dict:
+    """获取数据源快捷链接配置"""
+    config = _load_coverage_config()
+    links = config.get('data_source_links', {})
+    
+    # 如果配置文件中没有，返回默认值
+    if not links:
+        links = {
+            'finviz': {
+                'name': 'Finviz Screener',
+                'base_url': 'https://finviz.com/screener.ashx',
+                'description': '技术指标数据'
+            },
+            'market_chameleon': {
+                'name': 'MarketChameleon',
+                'base_url': 'https://marketchameleon.com',
+                'description': '期权数据'
+            }
+        }
+    
+    return links
