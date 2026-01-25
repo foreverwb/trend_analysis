@@ -51,11 +51,41 @@ const TaskDetailView = ({ taskId, onBack }) => {
       const taskData = await taskRes.json();
       setTask(taskData);
 
+      // 从任务详情中构建 ETF 配置映射
+      const etfConfigMap = {};
+      (taskData.etf_configs || []).forEach(config => {
+        etfConfigMap[config.etf_symbol] = {
+          name: config.etf_name || config.etf_symbol,
+          level: config.etf_level,
+          parentSymbol: config.parent_etf_symbol
+        };
+      });
+
       // 获取数据状态
       const statusRes = await fetch(`/api/monitor/tasks/${taskId}/data-status`);
       if (statusRes.ok) {
         const statusData = await statusRes.json();
-        setEtfList(statusData.etf_status || []);
+        // 后端返回 etf_statuses，转换字段名以匹配前端组件期望
+        const etfStatusList = (statusData.etf_statuses || []).map(item => {
+          const config = etfConfigMap[item.etf_symbol] || {};
+          return {
+            symbol: item.etf_symbol,
+            name: config.name || item.etf_symbol,
+            level: config.level || 'sector',
+            parentSymbol: config.parentSymbol,
+            finvizStatus: item.finviz_status === 'ready' ? 'complete' : 'missing',
+            finvizRecordCount: item.finviz_record_count || 0,
+            finvizUpdatedAt: item.finviz_updated_at,
+            mcStatus: item.mc_status === 'ready' ? 'complete' : 'missing',
+            mcRecordCount: item.mc_record_count || 0,
+            mcUpdatedAt: item.mc_updated_at,
+            marketStatus: item.market_data_status === 'ready' ? 'complete' : 'missing',
+            marketUpdatedAt: item.market_data_updated_at,
+            optionsStatus: item.options_data_status === 'ready' ? 'complete' : 'missing',
+            optionsUpdatedAt: item.options_data_updated_at
+          };
+        });
+        setEtfList(etfStatusList);
       }
 
       // 获取评分历史
@@ -350,8 +380,12 @@ const TaskDetailView = ({ taskId, onBack }) => {
               ETF 数据状态
             </h2>
             <button
-              onClick={() => handleOpenImport(etfList[0]?.symbol)}
-              className="flex items-center px-3 py-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors text-sm"
+              onClick={() => etfList[0]?.symbol && handleOpenImport(etfList[0].symbol)}
+              disabled={!etfList[0]?.symbol}
+              className={`flex items-center px-3 py-1.5 rounded-lg transition-colors text-sm
+                ${etfList[0]?.symbol 
+                  ? 'bg-green-50 text-green-600 hover:bg-green-100' 
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
             >
               <Plus className="w-4 h-4 mr-1" />
               导入数据

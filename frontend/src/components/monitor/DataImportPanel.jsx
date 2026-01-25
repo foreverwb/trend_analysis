@@ -112,6 +112,12 @@ const DataImportPanel = ({
     setWarnings([]);
     setImportResult(null);
 
+    // 验证 ETF symbol
+    if (!etfSymbol) {
+      setErrors(['请选择要导入数据的 ETF']);
+      return;
+    }
+
     // 验证内容
     const content = textContent.trim();
     if (!content) {
@@ -135,13 +141,13 @@ const DataImportPanel = ({
       const requestBody = inputMethod === 'text' ? {
         task_id: taskId,
         etf_symbol: etfSymbol,
-        data_source: dataSource,
-        json_text: content
+        import_type: dataSource,
+        json_data: content
       } : (() => {
         const formData = new FormData();
         formData.append('task_id', taskId);
         formData.append('etf_symbol', etfSymbol);
-        formData.append('data_source', dataSource);
+        formData.append('import_type', dataSource);
         formData.append('file', selectedFile);
         return formData;
       })();
@@ -159,12 +165,32 @@ const DataImportPanel = ({
       const result = await response.json();
 
       if (!response.ok) {
-        setErrors([result.detail || '导入失败']);
+        // 处理 FastAPI 验证错误格式
+        let errorMessages = [];
+        if (result.detail) {
+          if (typeof result.detail === 'string') {
+            errorMessages = [result.detail];
+          } else if (Array.isArray(result.detail)) {
+            // Pydantic 验证错误格式: [{type, loc, msg, input}, ...]
+            errorMessages = result.detail.map(err => 
+              typeof err === 'string' ? err : (err.msg || JSON.stringify(err))
+            );
+          } else {
+            errorMessages = [JSON.stringify(result.detail)];
+          }
+        } else {
+          errorMessages = ['导入失败'];
+        }
+        setErrors(errorMessages);
         return;
       }
 
       setImportResult(result);
-      setWarnings(result.warnings || []);
+      // 确保 warnings 是字符串数组
+      const warningMessages = (result.warnings || []).map(w => 
+        typeof w === 'string' ? w : JSON.stringify(w)
+      );
+      setWarnings(warningMessages);
       
       if (result.success) {
         onImportSuccess?.(result);
@@ -236,7 +262,7 @@ const DataImportPanel = ({
         <div>
           <h2 className="text-lg font-semibold text-gray-800">导入数据</h2>
           <p className="text-sm text-gray-500 mt-1">
-            为 {etfSymbol} 导入第三方数据
+            {etfSymbol ? `为 ${etfSymbol} 导入第三方数据` : '请先选择 ETF'}
           </p>
         </div>
         {onClose && (
